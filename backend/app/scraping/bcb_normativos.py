@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 _BCB_BASE = "https://www.bcb.gov.br"
 _SEARCH_URL = f"{_BCB_BASE}/api/search/app/normativos/buscanormativos"
 _DETAIL_URL = f"{_BCB_BASE}/api/conteudo/app/normativos/exibeoutrasnormas"
+_DETAIL_URL_NORMATIVO = f"{_BCB_BASE}/api/conteudo/app/normativos/exibenormativo"
 _PAGE_URL_TPL = (
     "{base}/estabilidadefinanceira/exibenormativo?tipo={tipo}&numero={numero}"
 )
@@ -159,35 +160,58 @@ class BCBNormativosSource:
         return refs
 
     async def fetch(self, ref: DocRef) -> Document:
-        """Download and return the full text of one document."""
+        """Download and return the full text of one document.
+
+        Comunicados come from ``exibeoutrasnormas``. Resoluções/Circulares return an
+        empty ``conteudo`` there, so we fall back to ``exibenormativo`` and to other
+        spellings of the type. The first non-empty answer wins.
+        """
+        candidates = [
+            (_DETAIL_URL, ref.doc_type.upper()),
+            (_DETAIL_URL_NORMATIVO, ref.doc_type),
+            (_DETAIL_URL_NORMATIVO, ref.doc_type.upper()),
+            (_DETAIL_URL, ref.doc_type),
+        ]
+        item: dict[str, Any] | None = None
+        tried: list[str] = []
         async with bcb_client() as client:
-            data: Any = await get_json(
-                client,
-                _DETAIL_URL,
-                p1=ref.doc_type.upper(),
-                p2=ref.numero,
-            )
+            for url, p1 in candidates:
+                try:
+                    data: Any = await get_json(client, url, p1=p1, p2=ref.numero)
+                except Exception as exc:  # noqa: BLE001 - try the next candidate
+                    tried.append(f"{url.rsplit('/', 1)[-1]}[{p1}]: {type(exc).__name__}")
+                    continue
+                items = data.get("conteudo", []) if isinstance(data, dict) else []
+                if items:
+                    item = items[0]
+                    break
+                keys = sorted(data) if isinstance(data, dict) else type(data).__name__
+                tried.append(f"{url.rsplit('/', 1)[-1]}[{p1}]: empty (keys={keys})")
 
-        items: list[dict[str, Any]] = data.get("conteudo", [])
-        if not items:
-            # Some document types return an empty conteudo array — log and skip.
-            logger.warning("Empty conteudo for %s — skipping", ref.url)
-            raise ValueError(f"Empty conteudo for {ref.url}")
+        if item is None:
+            logger.warning("Empty conteudo for %s (tried %s)", ref.url, "; ".join(tried))
+            raise ValueError(f"Empty conteudo for {ref.url} (tried: {'; '.join(tried)})")
 
-        item = items[0]
+        def field(*names: str) -> str:
+            for n in names:
+                v = item.get(n)
+                if v:
+                    return v
+            return ""
 
         # Combine assunto (subject) and texto (body) into a single plain text blob.
-        assunto_html: str = item.get("Assunto", "") or ""
-        texto_html: str = item.get("Texto", "") or ""
-        full_html = f"{assunto_html}\n{texto_html}"
+        full_html = f"{field('Assunto', 'assunto')}\n{field('Texto', 'texto')}"
         raw_text = _html_to_text(full_html)
+        if not raw_text.strip():
+            raise ValueError(f"No text in conteudo for {ref.url} (fields: {sorted(item)})")
 
+        data_str = field("Data", "data")
         return Document(
             source=ref.source,
             url=ref.url,
-            title=item.get("Titulo", ref.title),
-            doc_type=item.get("Tipo", ref.doc_type),
-            published_at=_parse_iso(item["Data"]),
+            title=field("Titulo", "titulo") or ref.title,
+            doc_type=field("Tipo", "tipo") or ref.doc_type,
+            published_at=_parse_iso(data_str) if data_str else ref.published_at,
             language="pt",
             raw_text=raw_text,
             content_hash=_make_hash(raw_text),

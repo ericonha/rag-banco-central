@@ -382,8 +382,54 @@ function QueryRows(props: { q: QueryLog; open: boolean; onToggle: () => void }) 
 
 // ------------------------------------------------------------------- page
 
+const EXPORT_PAGE = 100;
+
+/** Fetch every page of a paginated endpoint. */
+async function fetchAll<T>(load: (page: number) => Promise<Paginated<T>>): Promise<T[]> {
+  const first = await load(1);
+  const items = [...first.items];
+  for (let p = 2; p <= first.total_pages; p++) items.push(...(await load(p)).items);
+  return items;
+}
+
+function downloadJson(name: string, payload: unknown): void {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function Logs() {
   const [tab, setTab] = useState<'runs' | 'queries'>('runs');
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const exportJson = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      if (tab === 'runs') {
+        const runs = await fetchAll((page) => ApiClient.getPipelineRuns({ page, page_size: EXPORT_PAGE }));
+        const withEvents = await Promise.all(
+          runs.map(async (r) => ({ ...r, events: await ApiClient.getRunEvents(r.id).catch(() => []) })),
+        );
+        downloadJson('pipeline-runs', withEvents);
+      } else {
+        const queries = await fetchAll((page) =>
+          ApiClient.getQueryLogs({ hours: 24 * 365, page, page_size: EXPORT_PAGE }),
+        );
+        downloadJson('query-logs', queries);
+      }
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="logs-page">
       <div className="tabs" role="tablist">
@@ -393,7 +439,11 @@ export function Logs() {
         <button role="tab" aria-selected={tab === 'queries'} className={tab === 'queries' ? 'active' : ''} onClick={() => setTab('queries')}>
           Consultas
         </button>
+        <button type="button" className="export-btn" disabled={exporting} onClick={exportJson}>
+          {exporting ? 'Exportando…' : 'Exportar JSON'}
+        </button>
       </div>
+      {exportError && <div className="error-box">{exportError}</div>}
       <div className="logs-body">{tab === 'runs' ? <RunsTab /> : <QueriesTab />}</div>
     </div>
   );

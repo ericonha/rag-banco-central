@@ -17,10 +17,22 @@ logger = logging.getLogger(__name__)
 # Document numbers such as "34.977" or "34977" (embeddings are poor at matching identifiers).
 _NUMBER_RE = re.compile(r"\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,}\b")
 
+# Short numbers ("Resolução BCB nº 598", "circular 3.978", "resolution 598") only count when a
+# document keyword or "nº" comes right before them, so plain numbers in a question are ignored.
+_KEYWORD_NUMBER_RE = re.compile(
+    r"(?:n[º°o]\.?|n\.\s?[º°o]|n[úu]mero|number|no\.|"
+    r"resolu[çc][ãa]o(?:\s+(?:bcb|cmn))?|circular(?:\s+bcb)?|comunicado|"
+    r"instru[çc][ãa]o\s+normativa(?:\s+bcb)?|resolution|notice)"
+    r"\s*(?:n[º°o]\.?\s*)?(\d{1,3}(?:\.\d{3})*|\d+)\b",
+    re.IGNORECASE,
+)
+
 
 def _document_numbers(question: str) -> list[str]:
     """Return the document numbers mentioned in the question, as digits only."""
-    return list(dict.fromkeys(re.sub(r"\D", "", m) for m in _NUMBER_RE.findall(question)))
+    found = [re.sub(r"\D", "", m) for m in _NUMBER_RE.findall(question)]
+    found += [re.sub(r"\D", "", m) for m in _KEYWORD_NUMBER_RE.findall(question)]
+    return list(dict.fromkeys(n for n in found if n))
 
 
 async def _chunks_by_title_number(

@@ -227,3 +227,20 @@
     overflow-x: auto;
   }
 }
+
+.tabs .export-btn {
+  align-self: center;
+  margin: 0 0 0 auto;
+  padding: 5px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+}
+.tabs .export-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.tabs .export-btn:disabled {
+  opacity: 0.5;
+}
