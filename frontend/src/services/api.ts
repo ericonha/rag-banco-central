@@ -43,6 +43,17 @@ function toQuery(params: Record<string, string | number | undefined>): string {
   return text ? `?${text}` : '';
 }
 
+/** HTTP 429: too many requests; `retryAfter` is in seconds. */
+export class RateLimitError extends Error {
+  constructor(public retryAfter: number) {
+    super('Rate limit exceeded');
+  }
+}
+
+function rateLimited(response: Response): RateLimitError {
+  return new RateLimitError(Number(response.headers.get('Retry-After')) || 30);
+}
+
 /** The stream endpoint could not be used at all (nothing was received) — safe to fall back. */
 export class StreamUnavailableError extends Error {}
 
@@ -79,6 +90,7 @@ export class ApiClient {
       body: JSON.stringify(request),
     });
 
+    if (response.status === 429) throw rateLimited(response);
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`Chat request failed: ${error || response.statusText}`);
@@ -103,6 +115,7 @@ export class ApiClient {
       body: JSON.stringify(request),
       signal,
     });
+    if (response.status === 429) throw rateLimited(response);
     if (!response.ok || !response.body) {
       const error = await response.text().catch(() => '');
       throw new StreamUnavailableError(`Chat request failed: ${error || response.statusText}`);

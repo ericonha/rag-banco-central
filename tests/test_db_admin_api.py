@@ -297,3 +297,38 @@ async def test_timeseries_endpoint(db) -> None:
         assert data["days"] == 7 and len(data["points"]) == 7
         assert {"day", "queries", "errors", "avg_latency_ms", "tokens", "cost_usd", "up", "down"} <= set(data["points"][0])
         assert (await client.get("/api/admin/stats/timeseries", params={"days": 0})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_returns_429_with_cors_headers(db) -> None:
+    from app.main import rate_limiter
+
+    original = dict(rate_limiter.limits)
+    rate_limiter.limits["default"] = 2
+    try:
+        async with await _client() as client:
+            origin = {"Origin": "http://localhost:3000"}
+            assert (await client.get("/api/admin/stats/queries", headers=origin)).status_code == 200
+            assert (await client.get("/api/admin/stats/queries", headers=origin)).status_code == 200
+            blocked = await client.get("/api/admin/stats/queries", headers=origin)
+            assert blocked.status_code == 429
+            assert int(blocked.headers["retry-after"]) >= 1
+            assert blocked.headers["access-control-allow-origin"] == "http://localhost:3000"
+            # health probes and CORS preflight are never limited
+            assert (await client.get("/api/health")).status_code == 200
+            pre = await client.options(
+                "/api/chat",
+                headers={**origin, "Access-Control-Request-Method": "POST",
+                         "Access-Control-Request-Headers": "content-type"},
+            )
+            assert pre.status_code == 200
+    finally:
+        rate_limiter.limits.update(original)
+        rate_limiter.requests.clear()
+
+
+@pytest.mark.asyncio
+async def test_cors_blocks_unknown_origins(db) -> None:
+    async with await _client() as client:
+        res = await client.get("/api/health", headers={"Origin": "https://evil.example"})
+        assert "access-control-allow-origin" not in res.headers

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { MessageList } from './MessageList';
-import { ApiClient, StreamUnavailableError } from '../services/api';
+import { ApiClient, RateLimitError, StreamUnavailableError } from '../services/api';
 import { STRINGS } from '../i18n';
 import type { Language, Message, StoredMessage } from '../types';
 
@@ -161,7 +161,15 @@ export function ChatInterface({ conversationId, language, onExchange }: ChatInte
         setMessages((prev) => prev.filter((m) => m.id !== assistantId || m.content.trim() !== ''));
         setError({ kind: 'text', text: t.stopped });
       } else {
-        setError({ kind: 'text', text: err instanceof Error ? err.message : String(err) });
+        setError({
+          kind: 'text',
+          text:
+            err instanceof RateLimitError
+              ? t.rateLimited.replace('{s}', String(err.retryAfter))
+              : err instanceof Error
+                ? err.message
+                : String(err),
+        });
       }
     } finally {
       abortRef.current = null;

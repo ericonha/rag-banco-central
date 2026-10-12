@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     pipeline_stale_hours: int = 36
     # Optional Slack/Discord-compatible webhook called when a pipeline stage fails
     pipeline_alert_webhook_url: str = ""
+    # CORS: comma-separated list of allowed browser origins ("*" allows any)
+    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    # Rate limiting per client IP and minute (0 disables). Chat endpoints call the LLM, so they get less.
+    rate_limit_per_minute: int = 120
+    rate_limit_chat_per_minute: int = 15
+    # Read the client IP from X-Forwarded-For (only enable behind a reverse proxy you control)
+    rate_limit_trust_proxy: bool = False
 
 
 def get_settings() -> Settings:

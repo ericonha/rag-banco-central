@@ -90,6 +90,12 @@ PIPELINE_RUN_ON_START=false
 PIPELINE_STALE_HOURS=36
 PIPELINE_ALERT_WEBHOOK_URL=      # Slack/Discord-compatible incoming webhook; empty = no push alert
 
+# CORS and rate limiting (per client IP and minute; 0 disables)
+CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000   # add your frontend domain in production
+RATE_LIMIT_PER_MINUTE=120
+RATE_LIMIT_CHAT_PER_MINUTE=15    # /api/chat and /api/chat/stream call the LLM
+RATE_LIMIT_TRUST_PROXY=false     # true only behind a reverse proxy you control (reads X-Forwarded-For)
+
 # Reranker (empty = disabled)
 RERANK_MODEL=                    # e.g. BAAI/bge-reranker-v2-m3 (multilingual cross-encoder)
 RERANK_CANDIDATES=20             # candidates fetched before reranking down to 5
@@ -304,6 +310,7 @@ docker compose exec -e RUN_DB_TESTS=1 api python -m pytest -q    # also runs the
 | `test_faithfulness.py` | Citation/number/support checks of the faithfulness heuristic |
 | `test_rerank.py` | Reranker ordering (pure part) |
 | `test_health.py` | Pipeline health rules (failed, errors, stuck, stale) |
+| `test_ratelimit.py` | Sliding window, per-client/bucket limits, pruning, client IP resolution |
 | `test_timeseries.py` | Day-gap filling of the chart series |
 | `test_export.py` | Markdown/JSON conversation export |
 | `test_stream_answer.py` | Streaming generator with a fake async Anthropic client |
@@ -329,7 +336,8 @@ The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in 
 - Stopping an answer keeps the partial text on screen only: nothing is saved server-side for an interrupted stream.
 - The faithfulness check is lexical (number and term overlap with the cited passage). It catches wrong citations and invented numbers, not paraphrased claims that are simply wrong.
 - Migrations run automatically when the `api` container starts (`alembic upgrade head`).
-- `/api/admin/*` has no authentication.
+- `/api/admin/*` has no authentication (CORS is restricted to `CORS_ALLOW_ORIGINS`, and requests are rate limited per IP, but that is not access control).
+- The rate limiter is in-memory: it resets on restart and is per API process (fine for one container, not for several replicas).
 - The CI workflow has not been observed running end to end; the database tests passed locally in Docker.
 
 ## Roadmap

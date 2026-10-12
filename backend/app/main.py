@@ -21,7 +21,8 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -31,6 +32,7 @@ from app.db.session import get_conn
 from app.rag.answering import answer_question_with_usage, sources_from_chunks, stream_answer
 from app.rag.faithfulness import check_answer
 from app.rag.context import retrieval_query
+from app.ratelimit import RateLimiter, bucket_for, client_ip
 from app.rag.pricing import compute_cost
 from app.observability import log_query
 from app.rag.retrieval import retrieve_chunks
@@ -105,39 +107,32 @@ class HealthResponse(BaseModel):
 # ============================================================================
 
 
-class SimpleRateLimiter:
-    """Basic per-IP rate limiting (in-memory, resets on restart)."""
-    def __init__(self, requests_per_minute: int = 60):
-        self.requests_per_minute = requests_per_minute
-        self.requests: dict[str, list[float]] = {}
-
-    def is_allowed(self, ip: str) -> bool:
-        """Check if IP is within rate limit."""
-        now = datetime.now(tz=timezone.utc).timestamp()
-        minute_ago = now - 60
-
-        # Clean old requests
-        if ip in self.requests:
-            self.requests[ip] = [t for t in self.requests[ip] if t > minute_ago]
-
-        # Check limit
-        if ip not in self.requests:
-            self.requests[ip] = []
-
-        if len(self.requests[ip]) < self.requests_per_minute:
-            self.requests[ip].append(now)
-            return True
-        return False
-
-
-rate_limiter = SimpleRateLimiter(requests_per_minute=30)
+rate_limiter = RateLimiter(
+    {
+        "default": settings.rate_limit_per_minute,
+        "chat": settings.rate_limit_chat_per_minute,
+    }
+)
 
 
 async def rate_limit_middleware(request: Request, call_next):
-    """Rate limit by IP address."""
-    ip = request.client.host
-    if not rate_limiter.is_allowed(ip):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    """Rate limit by client IP; chat endpoints have their own, lower budget."""
+    if request.method == "OPTIONS" or request.url.path == "/api/health":
+        return await call_next(request)  # CORS preflight and health probes are never limited
+    ip = client_ip(
+        request.headers,
+        request.client.host if request.client else None,
+        settings.rate_limit_trust_proxy,
+    )
+    bucket = bucket_for(request.method, request.url.path)
+    allowed, retry_after = rate_limiter.check(ip, bucket)
+    if not allowed:
+        logger.warning("Rate limit hit: ip=%s bucket=%s", ip, bucket)
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Too many requests. Try again in {retry_after}s."},
+            headers={"Retry-After": str(retry_after)},
+        )
     return await call_next(request)
 
 
@@ -166,17 +161,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# Middleware order matters: the last one added is the outermost. The rate limiter is added
+# first so CORS wraps it and 429 responses still carry CORS headers (otherwise the browser
+# reports a network error instead of "too many requests").
+app.add_middleware(BaseHTTPMiddleware, dispatch=rate_limit_middleware)
+
+_origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to your frontend domain
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_origins or ["http://localhost:3000"],
+    allow_credentials=False,  # no cookies are used; also required for a "*" origin
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
+    expose_headers=["Retry-After", "Content-Disposition"],
 )
-
-# Rate limiting middleware
-app.middleware("http")(rate_limit_middleware)
 
 # Admin / observability routes (/api/admin/...)
 app.include_router(admin_router)
