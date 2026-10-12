@@ -105,7 +105,6 @@ def answer_question_with_usage(
     response = client.messages.create(
         model=anthropic_model,
         max_tokens=1024,
-        temperature=0,
         system=system_prompt,
         messages=messages,
     )
@@ -163,7 +162,6 @@ async def stream_answer(
     async with client.messages.stream(
         model=anthropic_model,
         max_tokens=1024,
-        temperature=0,
         system=system_prompt,
         messages=messages,
     ) as stream:

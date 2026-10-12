@@ -52,7 +52,7 @@ async def test_yields_deltas_then_usage(monkeypatch) -> None:
     assert [e["text"] for e in events if e["type"] == "delta"] == ["Ela ", "trata ", "de X [1]."]
     assert events[-1] == {"type": "usage", "tokens_in": 100, "tokens_out": 7}
     assert captured["model"] == "model-x"
-    assert captured["temperature"] == 0
+    assert "temperature" not in captured  # newer models/SDKs reject it
     assert captured["messages"][-1]["role"] == "user"
 
 

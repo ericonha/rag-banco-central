@@ -15,7 +15,7 @@ See `bcb-rag-plan.md` for the full plan, `PHASE4.md` for the retrieval/answering
 - **Retrieval evaluation:** a question set and a script that reports hit-rate@k and MRR for semantic-only vs hybrid retrieval.
 - **Streaming answers (SSE):** `POST /api/chat/stream` sends the answer token by token; the UI falls back to `/api/chat` if streaming is unavailable.
 - **Faithfulness check:** every answer is checked against its retrieved passages (invalid `[n]` citations, numbers that are not in the cited passage, weakly supported sentences, missing citations). Suspicious answers get a warning in the chat; the score is stored with the answer and in the query log. It is a cheap heuristic, not an LLM judge.
-- **Stricter prompt:** `temperature=0`, one citation per claim, literal numbers, and an explicit "what the documents do not cover".
+- **Stricter prompt:** one citation per claim, literal numbers, and an explicit "what the documents do not cover".
 - **Optional reranker:** a cross-encoder (`pgml.rank`) reorders the hybrid candidates; off by default (`RERANK_MODEL` empty), evaluated as a third mode in `run_eval`.
 - **Rich answers:** Markdown rendering (tables, code, links, lists, quotes) with clickable `[n]` citations, a dependency-free renderer (raw HTML is never interpreted, only http(s) links).
 - **Stop and regenerate:** stop a streaming answer; regenerate the last one (the server replaces the old exchange instead of duplicating it).
@@ -321,6 +321,10 @@ docker compose exec -e RUN_DB_TESTS=1 api python -m pytest -q    # also runs the
 
 The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in the database `DATABASE_URL` points to, so prefer a scratch database. In CI that is the service container.
 
+### End-to-end (browser)
+
+`e2e/` has Playwright tests that drive the real frontend against the real API and a real Postgres, with only retrieval and the LLM replaced by deterministic fakes (`e2e/server.py`): streamed Markdown answer with citations, 👎 + comment, stop, regenerate (also after reload), history search, export, document-type filter, Documentos and Logs charts. They run in CI as the `e2e` job. See `e2e/README.md` to run them locally against a disposable database.
+
 ## Development
 
 - Backend: Python 3.14, dependencies in `backend/pyproject.toml`; lint with `ruff`, types with `mypy`. `backend/app` is bind-mounted into `api` and `pipeline`, so code edits apply without a rebuild (the API reloads itself; restart `pipeline` after changing worker code).
@@ -334,11 +338,12 @@ The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in 
 - The evaluation set is small (12 questions, 3 unverified) and its identifier questions are the ones hybrid retrieval was designed for; treat the scores as indicative.
 - The reranker (`pgml.rank`) and SSE streaming were written without being exercised end to end in the author's environment: measure with `run_eval --rerank-model` before relying on it, and expect extra latency on CPU.
 - Stopping an answer keeps the partial text on screen only: nothing is saved server-side for an interrupted stream.
+- `temperature` is not sent to the Anthropic API (newer models/SDK versions reject it), so answers are not forced to be deterministic; the strict prompt does the work.
 - The faithfulness check is lexical (number and term overlap with the cited passage). It catches wrong citations and invented numbers, not paraphrased claims that are simply wrong.
 - Migrations run automatically when the `api` container starts (`alembic upgrade head`).
 - `/api/admin/*` has no authentication (CORS is restricted to `CORS_ALLOW_ORIGINS`, and requests are rate limited per IP, but that is not access control).
 - The rate limiter is in-memory: it resets on restart and is per API process (fine for one container, not for several replicas).
-- The CI workflow has not been observed running end to end; the database tests passed locally in Docker.
+- The Playwright tests (`e2e/`) and the `e2e` CI job were written without being run in the author's environment; expect to fix selectors or timing on the first run. The CI workflow has not been observed running end to end; the database tests passed locally in Docker.
 
 ## Roadmap
 
