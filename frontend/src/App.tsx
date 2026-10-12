@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ChatInterface } from './components/ChatInterface';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
-import { Sidebar } from './components/Sidebar';
+import { SideNav, Sidebar } from './components/Sidebar';
 import type { View } from './components/Sidebar';
 import { Documents } from './pages/Documents';
 import { Logs } from './pages/Logs';
@@ -74,13 +74,17 @@ function App() {
         language={language}
         conversations={conversations}
         activeId={activeId}
+        onSelect={select}
+        onNew={() => select(crypto.randomUUID())}
+        onDelete={remove}
+      />
+      <SideNav
+        view={view}
+        language={language}
         onView={(v) => {
           setView(v);
           setMenuOpen(false);
         }}
-        onSelect={select}
-        onNew={() => select(crypto.randomUUID())}
-        onDelete={remove}
       />
       <div className={`scrim${menuOpen ? ' show' : ''}`} onClick={() => setMenuOpen(false)} />
       <div className={`main${menuOpen ? ' menu-open' : ''}`}>

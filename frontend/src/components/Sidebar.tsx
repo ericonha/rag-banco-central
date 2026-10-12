@@ -8,7 +8,6 @@ interface SidebarProps {
   language: Language;
   conversations: ConversationSummary[];
   activeId: string;
-  onView: (view: View) => void;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
@@ -24,7 +23,7 @@ function shortDate(iso: string): string {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { view, language, conversations, activeId, onView, onSelect, onNew, onDelete } = props;
+  const { view, language, conversations, activeId, onSelect, onNew, onDelete } = props;
   const t = STRINGS[language];
 
   return (
@@ -73,17 +72,26 @@ export function Sidebar(props: SidebarProps) {
         })}
       </nav>
 
-      <div className="side-nav">
-        <button type="button" className={view === 'chat' ? 'active' : ''} onClick={() => onView('chat')}>
-          {t.chat}
-        </button>
-        <button type="button" className={view === 'docs' ? 'active' : ''} onClick={() => onView('docs')}>
-          {t.docs}
-        </button>
-        <button type="button" className={view === 'logs' ? 'active' : ''} onClick={() => onView('logs')}>
-          {t.logs}
-        </button>
-      </div>
     </aside>
+  );
+}
+
+/** Always-visible navigation, pinned to the bottom-left corner of the screen. */
+export function SideNav(props: { view: View; language: Language; onView: (view: View) => void }) {
+  const { view, language, onView } = props;
+  const t = STRINGS[language];
+
+  return (
+    <nav className="side-nav" aria-label="Navegação">
+      <button type="button" className={view === 'chat' ? 'active' : ''} onClick={() => onView('chat')}>
+        {t.chat}
+      </button>
+      <button type="button" className={view === 'docs' ? 'active' : ''} onClick={() => onView('docs')}>
+        {t.docs}
+      </button>
+      <button type="button" className={view === 'logs' ? 'active' : ''} onClick={() => onView('logs')}>
+        {t.logs}
+      </button>
+    </nav>
   );
 }
