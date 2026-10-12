@@ -12,7 +12,7 @@ See `bcb-rag-plan.md` for the full plan, `PHASE4.md` for the retrieval/answering
 - **Logs page:** pipeline runs and events, plus a log of every question (retrieved chunks, latency, status).
 - **Conversation context:** the last messages of the chat are sent to the LLM, and short follow-ups ("e o prazo?") are expanded with the previous question for retrieval.
 - **Token and cost tracking:** input/output tokens and an estimated USD cost per question, with totals on the Logs page.
-- **Retrieval evaluation:** a question set and a script that reports hit-rate@k and MRR for semantic-only vs hybrid retrieval.
+- **Retrieval evaluation:** a question set and a script that reports hit-rate@k and MRR for semantic-only, hybrid and (optionally) hybrid+rerank retrieval.
 - **Streaming answers (SSE):** `POST /api/chat/stream` sends the answer token by token; the UI falls back to `/api/chat` if streaming is unavailable.
 - **Faithfulness check:** every answer is checked against its retrieved passages (invalid `[n]` citations, numbers that are not in the cited passage, weakly supported sentences, missing citations). Suspicious answers get a warning in the chat; the score is stored with the answer and in the query log. It is a cheap heuristic, not an LLM judge.
 - **Stricter prompt:** one citation per claim, literal numbers, and an explicit "what the documents do not cover".
@@ -26,7 +26,9 @@ See `bcb-rag-plan.md` for the full plan, `PHASE4.md` for the retrieval/answering
 - **Conversation export** to Markdown or JSON from the chat top bar.
 - **Pipeline alerts:** a banner (and a dot on *Logs*) when the last run failed, ended with errors, is stuck, or no scrape happened for `PIPELINE_STALE_HOURS`; failures can also be pushed to a Slack/Discord-compatible webhook.
 - **Scheduled pipeline:** scrape → chunk → embed once a day, no manual commands.
-- **CI:** GitHub Actions builds both images, runs the test suite against a real Postgres (pgvector), and publishes the images to GHCR.
+- **Abuse protection:** per-IP rate limit (lower on the LLM endpoints, `429` with `Retry-After`) and CORS restricted to configured origins. No authentication on purpose (see Known issues).
+- **Tests:** ~100 unit and database tests plus Playwright end-to-end tests that drive the real UI against the real API.
+- **CI:** GitHub Actions builds both images, runs the test suite against a real Postgres (pgvector), runs the browser tests, and publishes the images to GHCR.
 
 ## Architecture
 
@@ -191,9 +193,9 @@ Sidebar navigation:
 
 | Page | What it shows |
 |---|---|
-| **Conversa** | Chat. The active conversation is remembered across reloads (`localStorage`) and stored server-side. |
+| **Conversa** | Chat with streaming, Markdown, stop/regenerate, 👍/👎, document-type and period filters, export, and a sidebar with history search. The active conversation is remembered across reloads (`localStorage`) and stored server-side. |
 | **Documentos** | Live dashboard: totals, % vectorized, per-type filter chips, search, paginated table with a vectorization bar per document. Auto-refreshes every 5 s (pausable). |
-| **Logs** | **Execuções** (pipeline runs, expandable events, filters) and **Consultas** (every question: latency, status, retrieved chunks). |
+| **Logs** | **Execuções** (pipeline runs, expandable events, filters), **Consultas** (every question: latency, tokens, cost, status, retrieved chunks), **Tendências** (daily charts) and **Feedback** (👍/👎 with comments). All tabs export to JSON. A banner and a dot on *Logs* appear when the pipeline needs attention. |
 
 Design: IBM Plex Sans + Source Serif 4, plain CSS tokens with automatic dark mode, PT/EN switcher.
 
@@ -317,13 +319,22 @@ docker compose exec -e RUN_DB_TESTS=1 api python -m pytest -q    # also runs the
 | `test_eval_metrics.py` | Hit-rate/MRR maths and dataset validity |
 | `test_bcb_normativos.py`, `test_bcb_fetch_fallback.py` | Scraper parsing and endpoint fallback (HTTP mocked) |
 | `test_chunker.py`, `test_rag.py` | Chunker (including the last-article regression) and context building |
-| `test_db_admin_api.py` | Admin API (runs, events, queries, stats, documents dashboard), title-number SQL conversation history/search, regenerate, feedback, export, timeseries and pipeline health against real Postgres |
+| `test_db_admin_api.py` | Admin API (runs, events, queries, stats, documents dashboard), title-number SQL, conversation history/search, regenerate, feedback, export, timeseries and pipeline health against real Postgres |
 
-The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in the database `DATABASE_URL` points to, so prefer a scratch database. In CI that is the service container.
+The unit and database suite has about 100 tests; the browser tests below add 7 scenarios. `RUN_DB_TESTS=1` writes and deletes a few rows in the database `DATABASE_URL` points to, so prefer a scratch database. In CI that is the service container.
 
 ### End-to-end (browser)
 
-`e2e/` has Playwright tests that drive the real frontend against the real API and a real Postgres, with only retrieval and the LLM replaced by deterministic fakes (`e2e/server.py`): streamed Markdown answer with citations, 👎 + comment, stop, regenerate (also after reload), history search, export, document-type filter, Documentos and Logs charts. They run in CI as the `e2e` job. See `e2e/README.md` to run them locally against a disposable database.
+`e2e/` has Playwright tests that drive the real frontend against the real API and a real Postgres, with only retrieval and the LLM replaced by deterministic fakes (`e2e/server.py`, never the real API or database): streamed Markdown answer with citations, 👎 + comment, stop, regenerate (also after reload), history search, export, document-type filter, Documentos and Logs charts. They run in CI as the `e2e` job. To run them locally you need a disposable database (the server applies migrations and inserts rows) and the API/frontend ports free:
+
+```bash
+docker compose stop api frontend pipeline
+docker compose exec -e PGPASSWORD=postgresml db psql -h localhost -U postgresml -d postgresml -c "CREATE DATABASE e2e"
+cd e2e && npm install && npx playwright install chromium
+DATABASE_URL=postgresql://postgresml:postgresml@localhost:5433/e2e E2E_PYTHON=../backend/.venv/bin/python npx playwright test
+```
+
+Run `npx` from inside `e2e/` (from elsewhere it downloads a second Playwright and fails). Details in `e2e/README.md`.
 
 ## Development
 
@@ -343,7 +354,8 @@ The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in 
 - Migrations run automatically when the `api` container starts (`alembic upgrade head`).
 - `/api/admin/*` has no authentication (CORS is restricted to `CORS_ALLOW_ORIGINS`, and requests are rate limited per IP, but that is not access control).
 - The rate limiter is in-memory: it resets on restart and is per API process (fine for one container, not for several replicas).
-- The Playwright tests (`e2e/`) and the `e2e` CI job were written without being run in the author's environment; expect to fix selectors or timing on the first run. The CI workflow has not been observed running end to end; the database tests passed locally in Docker.
+- The Playwright tests pass locally (6 of 7 on the first run; the seventh was a selector bug in the test, since fixed). The `e2e` CI job and the rest of the workflow have not been observed running on GitHub; the database tests passed locally in Docker.
+- The E2E tests fake retrieval and the LLM, so they do not cover the real Anthropic call (a rejected `temperature` parameter went unnoticed by every test). Check one real question after changing the SDK or model.
 
 ## Roadmap
 
@@ -351,6 +363,7 @@ The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in 
 - Run the reranker evaluation and record the before/after MRR.
 - LLM-as-judge faithfulness on a sample, and a feedback-driven eval set (👎 answers become test questions).
 - Backfill more history.
+- Optional end-to-end test with a real API key, skipped in CI.
 - Authentication on `/api/admin/*`.
 - Deployed demo and screenshots.
 
