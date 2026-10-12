@@ -15,7 +15,8 @@ See `bcb-rag-plan.md` for the full plan, `PHASE4.md` for the retrieval/answering
 - **Retrieval evaluation:** a question set and a script that reports hit-rate@k and MRR for semantic-only, hybrid and (optionally) hybrid+rerank retrieval.
 - **Streaming answers (SSE):** `POST /api/chat/stream` sends the answer token by token; the UI falls back to `/api/chat` if streaming is unavailable.
 - **Faithfulness check:** every answer is checked against its retrieved passages (invalid `[n]` citations, numbers that are not in the cited passage, weakly supported sentences, missing citations). Suspicious answers get a warning in the chat; the score is stored with the answer and in the query log. It is a cheap heuristic, not an LLM judge.
-- **Stricter prompt:** one citation per claim, literal numbers, and an explicit "what the documents do not cover".
+- **Stricter prompt:** one citation per claim, literal numbers, and an explicit "what the documents do not cover". The model is told the passages are only part of a document, so it says where they end instead of claiming the regulation stops there.
+- **Long documents:** a question naming a document ("resuma a Resolução 525") sends up to `PINNED_CHUNKS` (12) of that document's chunks in reading order, not just the top 5. Answers cut by `LLM_MAX_TOKENS` carry a visible notice.
 - **Optional reranker:** a cross-encoder (`pgml.rank`) reorders the hybrid candidates; off by default (`RERANK_MODEL` empty), evaluated as a third mode in `run_eval`.
 - **Rich answers:** Markdown rendering (tables, code, links, lists, quotes) with clickable `[n]` citations, a dependency-free renderer (raw HTML is never interpreted, only http(s) links).
 - **Stop and regenerate:** stop a streaming answer; regenerate the last one (the server replaces the old exchange instead of duplicating it).
@@ -97,6 +98,10 @@ CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000   # add your fron
 RATE_LIMIT_PER_MINUTE=120
 RATE_LIMIT_CHAT_PER_MINUTE=15    # /api/chat and /api/chat/stream call the LLM
 RATE_LIMIT_TRUST_PROXY=false     # true only behind a reverse proxy you control (reads X-Forwarded-For)
+
+# Answer length limit and chunks sent for a document named by number
+LLM_MAX_TOKENS=2048
+PINNED_CHUNKS=12
 
 # Reranker (empty = disabled)
 RERANK_MODEL=                    # e.g. BAAI/bge-reranker-v2-m3 (multilingual cross-encoder)
@@ -315,6 +320,7 @@ docker compose exec -e RUN_DB_TESTS=1 api python -m pytest -q    # also runs the
 | `test_ratelimit.py` | Sliding window, per-client/bucket limits, pruning, client IP resolution |
 | `test_timeseries.py` | Day-gap filling of the chart series |
 | `test_export.py` | Markdown/JSON conversation export |
+| `test_truncation_and_pinned.py` | Cut-off answers get a notice, `max_tokens` is passed, a named document expands beyond k in reading order |
 | `test_stream_answer.py` | Streaming generator with a fake async Anthropic client |
 | `test_eval_metrics.py` | Hit-rate/MRR maths and dataset validity |
 | `test_bcb_normativos.py`, `test_bcb_fetch_fallback.py` | Scraper parsing and endpoint fallback (HTTP mocked) |

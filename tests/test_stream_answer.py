@@ -12,7 +12,7 @@ CHUNKS = [{
 }]
 
 
-def _fake(captured: dict, pieces: list[str], usage):
+def _fake(captured: dict, pieces: list[str], usage, stop_reason: str = "end_turn"):
     class Stream:
         async def __aenter__(self):
             return self
@@ -28,7 +28,7 @@ def _fake(captured: dict, pieces: list[str], usage):
             return gen()
 
         async def get_final_message(self):
-            return SimpleNamespace(usage=usage)
+            return SimpleNamespace(usage=usage, stop_reason=stop_reason)
 
     class FakeClient:
         def __init__(self, api_key: str = "") -> None:
@@ -50,7 +50,7 @@ async def test_yields_deltas_then_usage(monkeypatch) -> None:
     events = [e async for e in answering.stream_answer("e a 598?", CHUNKS, "pt", "key", "model-x", history=[])]
 
     assert [e["text"] for e in events if e["type"] == "delta"] == ["Ela ", "trata ", "de X [1]."]
-    assert events[-1] == {"type": "usage", "tokens_in": 100, "tokens_out": 7}
+    assert events[-1] == {"type": "usage", "tokens_in": 100, "tokens_out": 7, "truncated": False}
     assert captured["model"] == "model-x"
     assert "temperature" not in captured  # newer models/SDKs reject it
     assert captured["messages"][-1]["role"] == "user"
@@ -60,4 +60,13 @@ async def test_yields_deltas_then_usage(monkeypatch) -> None:
 async def test_missing_usage_gives_none(monkeypatch) -> None:
     monkeypatch.setattr(answering, "AsyncAnthropic", _fake({}, ["ok"], None))
     events = [e async for e in answering.stream_answer("q", CHUNKS, "en", "key", "m")]
-    assert events[-1] == {"type": "usage", "tokens_in": None, "tokens_out": None}
+    assert events[-1] == {"type": "usage", "tokens_in": None, "tokens_out": None, "truncated": False}
+
+
+@pytest.mark.asyncio
+async def test_max_tokens_stop_is_reported_as_truncated(monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(answering, "AsyncAnthropic", _fake(captured, ["texto"], None, "max_tokens"))
+    events = [e async for e in answering.stream_answer("q", CHUNKS, "pt", "key", "m", max_tokens=123)]
+    assert events[-1]["truncated"] is True
+    assert captured["max_tokens"] == 123

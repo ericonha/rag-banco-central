@@ -96,7 +96,7 @@ async def fake_retrieve(conn, question, embedding_model, embedding_dim, k=5, doc
 _answers = itertools.count(1)
 
 
-async def fake_stream(question, chunks, language="pt", anthropic_api_key="", anthropic_model="", history=None):
+async def fake_stream(question, chunks, language="pt", anthropic_api_key="", anthropic_model="", history=None, **_):
     n = next(_answers)
     if "lenta" in question.lower():
         pieces = [f"Parte {i} da resposta lenta. " for i in range(1, 60)]

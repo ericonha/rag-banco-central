@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # Rate limiting per client IP and minute (0 disables). Chat endpoints call the LLM, so they get less.
     rate_limit_per_minute: int = 120
     rate_limit_chat_per_minute: int = 15
+    # Output limit of one answer (the answer says so when it is cut off)
+    llm_max_tokens: int = 2048
+    # With an exact document-number match, send up to this many of that document's chunks (in order)
+    pinned_chunks: int = 12
     # Read the client IP from X-Forwarded-For (only enable behind a reverse proxy you control)
     rate_limit_trust_proxy: bool = False
 

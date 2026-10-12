@@ -23,7 +23,8 @@ Ao responder:
 2. Use números, datas, prazos e valores exatamente como aparecem nos documentos. Nunca invente nem calcule valores que não estejam neles.
 3. Se os documentos respondem só uma parte da pergunta, responda essa parte e diga claramente o que não consta nos documentos.
 4. Seja conciso e preciso, com linguagem formal e técnica.
-5. Se a pergunta abordar vários tópicos, organize a resposta em seções."""
+5. Se a pergunta abordar vários tópicos, organize a resposta em seções.
+6. Os trechos fornecidos são apenas uma parte dos documentos. Se eles terminarem no meio de uma norma, diga até onde vão (por exemplo, "os trechos recuperados vão até o art. 8º") e nunca afirme que a norma termina ali nem que o restante "não consta" nos documentos."""
 
 SYSTEM_PROMPT_EN = """You are an expert assistant on Banco Central do Brasil (BCB) regulations.
 
@@ -34,7 +35,18 @@ When answering:
 2. Use numbers, dates, deadlines and amounts exactly as they appear in the documents. Never invent or compute values that are not in them.
 3. If the documents answer only part of the question, answer that part and state clearly what the documents do not cover.
 4. Be concise and precise, in formal, technical language.
-5. If the question covers multiple topics, organize the answer in sections."""
+5. If the question covers multiple topics, organize the answer in sections.
+6. The passages provided are only part of the documents. If they stop in the middle of a regulation, say where they end (for example, "the retrieved passages run up to art. 8") and never state that the regulation ends there or that the rest is "not in the documents"."""
+
+
+DEFAULT_MAX_TOKENS = 2048
+
+
+def truncation_notice(language: str) -> str:
+    """Appended when the model hit the output limit, so a cut-off answer is never silent."""
+    if language == "en":
+        return "\n\n_(Answer cut off at the length limit. Ask for a specific part to get the rest.)_"
+    return "\n\n_(Resposta cortada pelo limite de tamanho. Peça uma parte específica para ver o restante.)_"
 
 
 def _build_context_from_chunks(chunks: list[dict[str, Any]]) -> str:
@@ -83,6 +95,7 @@ def answer_question_with_usage(
     anthropic_api_key: str = "",
     anthropic_model: str = "claude-opus-5-5",
     history: list[dict[str, Any]] | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> tuple[str, list[dict[str, Any]], dict[str, int | None]]:
     """
     Answer a question using retrieved chunks and earlier turns of the conversation.
@@ -104,7 +117,7 @@ def answer_question_with_usage(
 
     response = client.messages.create(
         model=anthropic_model,
-        max_tokens=1024,
+        max_tokens=max_tokens,
         system=system_prompt,
         messages=messages,
     )
@@ -117,6 +130,9 @@ def answer_question_with_usage(
             break
     if not answer_text:
         answer_text = "Unable to generate answer"
+    elif getattr(response, "stop_reason", None) == "max_tokens":
+        logger.warning("Answer hit max_tokens=%d", max_tokens)
+        answer_text += truncation_notice(language)
 
     usage_obj = getattr(response, "usage", None)
     usage: dict[str, int | None] = {
@@ -150,10 +166,11 @@ async def stream_answer(
     anthropic_api_key: str = "",
     anthropic_model: str = "claude-opus-5-5",
     history: list[dict[str, Any]] | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> AsyncIterator[dict[str, Any]]:
     """
     Stream an answer. Yields {"type": "delta", "text": ...} for every piece of text and, at
-    the end, {"type": "usage", "tokens_in": ..., "tokens_out": ...}.
+    the end, {"type": "usage", "tokens_in": ..., "tokens_out": ..., "truncated": bool}.
     """
     system_prompt, messages = prepare_prompt(question, chunks, language, history)
     client = AsyncAnthropic(api_key=anthropic_api_key)
@@ -161,7 +178,7 @@ async def stream_answer(
 
     async with client.messages.stream(
         model=anthropic_model,
-        max_tokens=1024,
+        max_tokens=max_tokens,
         system=system_prompt,
         messages=messages,
     ) as stream:
@@ -174,4 +191,5 @@ async def stream_answer(
         "type": "usage",
         "tokens_in": getattr(usage_obj, "input_tokens", None),
         "tokens_out": getattr(usage_obj, "output_tokens", None),
+        "truncated": getattr(final, "stop_reason", None) == "max_tokens",
     }

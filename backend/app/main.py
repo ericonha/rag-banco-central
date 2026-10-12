@@ -29,7 +29,7 @@ from app.config import get_settings
 from app.db.chunks import get_chunks_needing_embedding
 from app.db.conversations import get_recent_history, save_exchange
 from app.db.session import get_conn
-from app.rag.answering import answer_question_with_usage, sources_from_chunks, stream_answer
+from app.rag.answering import answer_question_with_usage, sources_from_chunks, stream_answer, truncation_notice
 from app.rag.faithfulness import check_answer
 from app.rag.context import retrieval_query
 from app.ratelimit import RateLimiter, bucket_for, client_ip
@@ -278,6 +278,7 @@ async def _retrieve(
             rerank_candidates=settings.rerank_candidates,
             doc_type_filter=doc_type,
             since_days=since_days,
+            pinned_limit=settings.pinned_chunks,
         )
     # score = cosine similarity (1 - cosine distance)
     retrieved = [
@@ -358,6 +359,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             anthropic_api_key=settings.anthropic_api_key,
             anthropic_model=llm_model,
             history=history,
+            max_tokens=settings.llm_max_tokens,
         )
         llm_ms = _elapsed_ms(t_llm)
         cost = compute_cost(
@@ -481,12 +483,17 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 anthropic_api_key=settings.anthropic_api_key,
                 anthropic_model=llm_model,
                 history=history,
+                max_tokens=settings.llm_max_tokens,
             ):
                 if ev["type"] == "delta":
                     parts.append(ev["text"])
                     yield _sse("delta", {"text": ev["text"]})
                 elif ev["type"] == "usage":
                     usage = {"tokens_in": ev["tokens_in"], "tokens_out": ev["tokens_out"]}
+                    if ev.get("truncated"):
+                        notice = truncation_notice(request.language)
+                        parts.append(notice)
+                        yield _sse("delta", {"text": notice})
             llm_ms = _elapsed_ms(t_llm)
 
             answer_text = "".join(parts)

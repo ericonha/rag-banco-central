@@ -76,6 +76,7 @@ async def retrieve_chunks(
     rerank_model: str = "",
     rerank_candidates: int = 20,
     since_days: int | None = None,
+    pinned_limit: int = 0,
 ) -> list[dict[str, Any]]:
     """
     Retrieve top-k chunks most similar to the question.
@@ -95,6 +96,9 @@ async def retrieve_chunks(
             and reordered, then cut to k (pinned exact matches stay first)
         rerank_candidates: how many candidates to fetch when reranking
         since_days: only documents published in the last N days
+        pinned_limit: when > k and the question names a document number, return up to this many
+            chunks of that document (in reading order) instead of only k, so "summarize
+            Resolução 525" sees more than the first articles. 0 keeps the strict top-k.
     
     Returns:
         List of dicts with keys: id, text, document_id, title, url, published_at, doc_type, distance
@@ -136,8 +140,12 @@ async def retrieve_chunks(
     # put that document's chunks first, then fill the rest with the semantic hits.
     numbers = _document_numbers(question) if hybrid else []
     if numbers:
-        exact = await _chunks_by_title_number(conn, numbers, fetch_k, doc_type_filter, since_days)
+        exact_limit = max(fetch_k, pinned_limit)
+        exact = await _chunks_by_title_number(conn, numbers, exact_limit, doc_type_filter, since_days)
         if exact:
+            if pinned_limit > k:
+                k = max(k, min(len(exact), pinned_limit))
+                fetch_k = max(fetch_k, k)
             seen = {c["id"] for c in exact}
             result = (exact + [c for c in result if c["id"] not in seen])[:fetch_k]
             logger.info("Title-number match %s: %d exact chunks", numbers, len(exact))
