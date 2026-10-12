@@ -19,6 +19,7 @@ import sys
 import psycopg
 
 from app.config import get_settings
+from app.worker.alerts import send_alert
 
 logger = logging.getLogger("worker.pipeline")
 
@@ -65,6 +66,10 @@ async def run_pipeline(days: int, batch_size: int) -> bool:
     failed = [k for k, v in results.items() if not v]
     if failed:
         logger.error("Pipeline finished with problems in: %s", ", ".join(failed))
+        await send_alert(
+            f"⚠️ BCB RAG pipeline: falha nas etapas {', '.join(failed)} "
+            f"(scrape --days {days}). Veja Logs > Pipeline."
+        )
     else:
         logger.info("Pipeline finished OK")
     return not failed

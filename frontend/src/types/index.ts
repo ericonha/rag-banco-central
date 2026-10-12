@@ -8,6 +8,12 @@ export interface ChatRequest {
   question: string;
   language: Language;
   conversation_id?: string;
+  /** Restrict retrieval to this document type. */
+  doc_type?: string;
+  /** Restrict retrieval to documents published in the last N days. */
+  since_days?: number;
+  /** Assistant message being regenerated (replaced on the server). */
+  regenerate_of?: number;
 }
 
 export interface SourceRef {
@@ -18,11 +24,34 @@ export interface SourceRef {
   chunk_text: string;
 }
 
+export interface GroundingFlag {
+  type: 'invalid_citation' | 'unsupported_number' | 'low_support' | 'no_citations';
+  detail?: string;
+  [key: string]: unknown;
+}
+
+/** Heuristic faithfulness check of an answer against its retrieved passages. */
+export interface Grounding {
+  score: number;
+  ok: boolean;
+  checked: number;
+  flags: GroundingFlag[];
+}
+
 export interface ChatResponse {
   answer: string;
   sources: SourceRef[];
   retrieved_chunks: number;
   conversation_id?: string;
+  message_id?: number | null;
+  grounding?: Grounding | null;
+}
+
+/** Callbacks for the SSE chat stream. */
+export interface ChatStreamHandlers {
+  onMeta?: (meta: { conversation_id: string; sources: SourceRef[]; retrieved_chunks: number }) => void;
+  onDelta?: (text: string) => void;
+  onDone?: (done: { message_id: number | null; grounding: Grounding | null }) => void;
 }
 
 export interface DocumentRef {
@@ -47,6 +76,11 @@ export interface Message {
   sources?: SourceRef[];
   retrieved_chunks?: number;
   timestamp: Date;
+  /** Database id of an assistant message (needed for feedback). */
+  dbId?: number;
+  /** 1 = helpful, -1 = not helpful. */
+  feedback?: 1 | -1 | null;
+  grounding?: Grounding | null;
 }
 
 /** Row of GET /api/conversations (sidebar). */
@@ -66,6 +100,8 @@ export interface StoredMessage {
   content: string;
   sources: SourceRef[] | null;
   created_at: string;
+  feedback?: 1 | -1 | null;
+  grounding?: Grounding | null;
 }
 
 export interface ConversationDetail {

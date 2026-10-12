@@ -11,6 +11,10 @@ interface SidebarProps {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  search: string;
+  onSearch: (value: string) => void;
+  days: number;
+  onDays: (value: number) => void;
 }
 
 function shortDate(iso: string): string {
@@ -23,7 +27,7 @@ function shortDate(iso: string): string {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { view, language, conversations, activeId, onSelect, onNew, onDelete } = props;
+  const { view, language, conversations, activeId, onSelect, onNew, onDelete, search, onSearch, days, onDays } = props;
   const t = STRINGS[language];
 
   return (
@@ -40,9 +44,25 @@ export function Sidebar(props: SidebarProps) {
         {t.newChat}
       </button>
 
+      <div className="history-search">
+        <input
+          type="search"
+          value={search}
+          placeholder={t.searchChats}
+          aria-label={t.searchChats}
+          onChange={(e) => onSearch(e.target.value)}
+        />
+        <select value={days} onChange={(e) => onDays(Number(e.target.value))} aria-label={t.period}>
+          <option value={0}>{t.anyTime}</option>
+          <option value={7}>{t.last7}</option>
+          <option value={30}>{t.last30}</option>
+        </select>
+      </div>
       <div className="history-label">{t.history}</div>
       <nav className="history" aria-label={t.history}>
-        {conversations.length === 0 && <p className="history-empty">{t.noHistory}</p>}
+        {conversations.length === 0 && (
+          <p className="history-empty">{search || days ? t.noResults : t.noHistory}</p>
+        )}
         {conversations.map((c) => {
           const active = view === 'chat' && c.id === activeId;
           return (
@@ -77,8 +97,14 @@ export function Sidebar(props: SidebarProps) {
 }
 
 /** Always-visible navigation, pinned to the bottom-left corner of the screen. */
-export function SideNav(props: { view: View; language: Language; onView: (view: View) => void }) {
-  const { view, language, onView } = props;
+export function SideNav(props: {
+  view: View;
+  language: Language;
+  onView: (view: View) => void;
+  /** Show a warning dot on Logs (pipeline needs attention). */
+  alert?: 'warning' | 'error' | null;
+}) {
+  const { view, language, onView, alert } = props;
   const t = STRINGS[language];
 
   return (
@@ -91,6 +117,7 @@ export function SideNav(props: { view: View; language: Language; onView: (view: 
       </button>
       <button type="button" className={view === 'logs' ? 'active' : ''} onClick={() => onView('logs')}>
         {t.logs}
+        {alert && <span className={`nav-dot ${alert}`} aria-hidden="true" />}
       </button>
     </nav>
   );

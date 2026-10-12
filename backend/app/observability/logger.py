@@ -27,6 +27,7 @@ async def log_query(
     tokens_in: int | None = None,
     tokens_out: int | None = None,
     cost_usd: float | None = None,
+    grounding: dict[str, Any] | None = None,
     latency_retrieval_ms: int | None = None,
     latency_llm_ms: int | None = None,
     latency_total_ms: int | None = None,
@@ -43,8 +44,8 @@ async def log_query(
                 INSERT INTO query_logs (
                     question, answer, retrieved, top_k, embedding_model, llm_model,
                     tokens_in, tokens_out, latency_retrieval_ms, latency_llm_ms,
-                    latency_total_ms, status, error, cost_usd
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    latency_total_ms, status, error, cost_usd, grounding
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     question,
@@ -61,6 +62,7 @@ async def log_query(
                     status,
                     error,
                     cost_usd,
+                    Jsonb(grounding) if grounding is not None else None,
                 ),
             )
         return True

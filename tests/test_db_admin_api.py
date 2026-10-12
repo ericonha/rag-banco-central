@@ -145,6 +145,11 @@ async def test_title_number_lookup_and_history(db, token) -> None:
         assert [c["document_id"] for c in found] == [doc_id]
         assert await _chunks_by_title_number(conn, [number], 5, "Comunicado") == []
 
+        # period filter: a document published 400 days ago
+        db.execute("UPDATE documents SET published_at = now() - interval '400 days' WHERE id = %s", (doc_id,))
+        assert await _chunks_by_title_number(conn, [number], 5, None, 30) == []
+        assert [c["document_id"] for c in await _chunks_by_title_number(conn, [number], 5, None, 1000)] == [doc_id]
+
     conv = uuid.uuid4()
     db.cleanups.append(("DELETE FROM conversations WHERE id = %s", (conv,)))
     await save_exchange(conv, "pt", "pergunta 1", "resposta 1", [])
@@ -156,3 +161,139 @@ async def test_title_number_lookup_and_history(db, token) -> None:
     ]
     assert len(await get_recent_history(conv, 10)) == 4
     assert await get_recent_history(conv, 0) == []
+
+
+async def _exchange(db, token: str):
+    """Create a conversation with one Q&A pair; returns (conversation_id, assistant message id)."""
+    cid = uuid.uuid4()
+    db.execute("INSERT INTO conversations (id, language) VALUES (%s, 'pt')", (cid,))
+    db.cleanups.append(("DELETE FROM conversations WHERE id = %s", (cid,)))
+    db.execute(
+        "INSERT INTO messages (conversation_id, role, content) VALUES (%s, 'user', %s)",
+        (cid, f"pergunta {token}"),
+    )
+    row = db.execute(
+        "INSERT INTO messages (conversation_id, role, content, sources, grounding) "
+        "VALUES (%s, 'assistant', %s, %s, %s) RETURNING id",
+        (cid, f"resposta {token} [1]", Jsonb([{"title": "Doc", "url": "https://x.test"}]),
+         Jsonb({"score": 0.5, "ok": False, "checked": 1, "flags": []})),
+    ).fetchone()
+    return cid, row[0]
+
+
+@pytest.mark.asyncio
+async def test_feedback_roundtrip(db, token) -> None:
+    cid, mid = await _exchange(db, token)
+    async with await _client() as client:
+        assert (await client.post(f"/api/messages/{mid}/feedback", json={"value": -1, "comment": "errado"})).json() == {
+            "id": mid, "feedback": -1,
+        }
+        msgs = (await client.get(f"/api/conversations/{cid}")).json()["messages"]
+        assistant = next(m for m in msgs if m["role"] == "assistant")
+        assert assistant["feedback"] == -1
+        assert assistant["grounding"]["ok"] is False
+
+        admin = (await client.get("/api/admin/feedback", params={"value": -1, "limit": 500})).json()
+        item = next(i for i in admin["items"] if i["id"] == mid)
+        assert item["feedback_comment"] == "errado"
+        assert item["question"] == f"pergunta {token}"
+        assert admin["down"] >= 1
+
+        # 0 clears it
+        await client.post(f"/api/messages/{mid}/feedback", json={"value": 0})
+        row = db.execute("SELECT feedback, feedback_comment FROM messages WHERE id = %s", (mid,)).fetchone()
+        assert row == (None, None)
+
+        assert (await client.post("/api/messages/999999999/feedback", json={"value": 1})).status_code == 404
+        assert (await client.post(f"/api/messages/{mid}/feedback", json={"value": 5})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_feedback_rejects_user_messages(db, token) -> None:
+    cid, _ = await _exchange(db, token)
+    user_id = db.execute(
+        "SELECT id FROM messages WHERE conversation_id = %s AND role = 'user'", (cid,)
+    ).fetchone()[0]
+    async with await _client() as client:
+        assert (await client.post(f"/api/messages/{user_id}/feedback", json={"value": 1})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_markdown_and_json(db, token) -> None:
+    cid, _ = await _exchange(db, token)
+    async with await _client() as client:
+        md = await client.get(f"/api/conversations/{cid}/export", params={"format": "md"})
+        assert md.status_code == 200
+        assert "attachment" in md.headers["content-disposition"]
+        assert f"pergunta {token}" in md.text and "Doc" in md.text
+
+        js = await client.get(f"/api/conversations/{cid}/export", params={"format": "json"})
+        data = js.json()
+        assert data["conversation_id"] == str(cid)
+        assert [m["role"] for m in data["messages"]] == ["user", "assistant"]
+
+        assert (await client.get(f"/api/conversations/{cid}/export", params={"format": "pdf"})).status_code == 422
+        assert (await client.get(f"/api/conversations/{uuid.uuid4()}/export")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_pipeline_health_reports_latest_failure(db) -> None:
+    _insert(
+        db,
+        "INSERT INTO pipeline_runs (stage, status, started_at, finished_at, error) "
+        "VALUES ('embed', 'failed', now() + interval '1 minute', now() + interval '1 minute', 'boom')",
+        (),
+        "pipeline_runs",
+    )
+    async with await _client() as client:
+        health = (await client.get("/api/admin/pipeline/health")).json()
+    assert health["status"] == "error"
+    assert any(i["stage"] == "embed" and i["kind"] == "failed" for i in health["issues"])
+
+
+@pytest.mark.asyncio
+async def test_conversation_search_and_period(db, token) -> None:
+    cid, _ = await _exchange(db, token)
+    async with await _client() as client:
+        hit = (await client.get("/api/conversations", params={"q": f"RESPOSTA {token}"})).json()
+        assert cid.hex in [c["id"].replace("-", "") for c in hit]
+        miss = (await client.get("/api/conversations", params={"q": f"naoexiste{token}"})).json()
+        assert miss == []
+        # LIKE wildcards in the query are literal
+        assert (await client.get("/api/conversations", params={"q": "%"})).status_code == 200
+        recent = (await client.get("/api/conversations", params={"q": token, "days": 1})).json()
+        assert len(recent) == 1
+        db.execute("UPDATE messages SET created_at = now() - interval '10 days' WHERE conversation_id = %s", (cid,))
+        assert (await client.get("/api/conversations", params={"q": token, "days": 1})).json() == []
+        assert len((await client.get("/api/conversations", params={"q": token, "days": 30})).json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_regenerate_replaces_the_exchange(db, token) -> None:
+    from app.db.conversations import get_recent_history, save_exchange
+
+    conv = uuid.uuid4()
+    db.cleanups.append(("DELETE FROM conversations WHERE id = %s", (conv,)))
+    await save_exchange(conv, "pt", "primeira", "resp 1", [])
+    await save_exchange(conv, "pt", "segunda", "resp 2 ruim", [])
+    old_id = db.execute(
+        "SELECT id FROM messages WHERE conversation_id = %s AND content = 'resp 2 ruim'", (conv,)
+    ).fetchone()[0]
+
+    # history for the regeneration excludes the exchange being replaced
+    assert [m["content"] for m in await get_recent_history(conv, 10, regenerate_of=old_id)] == ["primeira", "resp 1"]
+
+    new_id = await save_exchange(conv, "pt", "segunda", "resp 2 boa", [], replace_message_id=old_id)
+    assert new_id != old_id
+    assert [m["content"] for m in await get_recent_history(conv, 10)] == [
+        "primeira", "resp 1", "segunda", "resp 2 boa",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_timeseries_endpoint(db) -> None:
+    async with await _client() as client:
+        data = (await client.get("/api/admin/stats/timeseries", params={"days": 7})).json()
+        assert data["days"] == 7 and len(data["points"]) == 7
+        assert {"day", "queries", "errors", "avg_latency_ms", "tokens", "cost_usd", "up", "down"} <= set(data["points"][0])
+        assert (await client.get("/api/admin/stats/timeseries", params={"days": 0})).status_code == 422

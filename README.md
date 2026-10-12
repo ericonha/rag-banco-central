@@ -13,6 +13,18 @@ See `bcb-rag-plan.md` for the full plan, `PHASE4.md` for the retrieval/answering
 - **Conversation context:** the last messages of the chat are sent to the LLM, and short follow-ups ("e o prazo?") are expanded with the previous question for retrieval.
 - **Token and cost tracking:** input/output tokens and an estimated USD cost per question, with totals on the Logs page.
 - **Retrieval evaluation:** a question set and a script that reports hit-rate@k and MRR for semantic-only vs hybrid retrieval.
+- **Streaming answers (SSE):** `POST /api/chat/stream` sends the answer token by token; the UI falls back to `/api/chat` if streaming is unavailable.
+- **Faithfulness check:** every answer is checked against its retrieved passages (invalid `[n]` citations, numbers that are not in the cited passage, weakly supported sentences, missing citations). Suspicious answers get a warning in the chat; the score is stored with the answer and in the query log. It is a cheap heuristic, not an LLM judge.
+- **Stricter prompt:** `temperature=0`, one citation per claim, literal numbers, and an explicit "what the documents do not cover".
+- **Optional reranker:** a cross-encoder (`pgml.rank`) reorders the hybrid candidates; off by default (`RERANK_MODEL` empty), evaluated as a third mode in `run_eval`.
+- **Rich answers:** Markdown rendering (tables, code, links, lists, quotes) with clickable `[n]` citations, a dependency-free renderer (raw HTML is never interpreted, only http(s) links).
+- **Stop and regenerate:** stop a streaming answer; regenerate the last one (the server replaces the old exchange instead of duplicating it).
+- **Chat filters:** restrict retrieval to a document type and/or to documents published in the last 7/30/365 days.
+- **History search:** full-text search over all messages plus a period filter in the sidebar.
+- **Logs trends:** SVG charts of queries/errors, latency, cost (or tokens) and 👍/👎/unsupported answers per day.
+- **Feedback 👍/👎** on every answer (optimistic UI; a 👎 asks what was wrong), with a Feedback tab in Logs (satisfaction, rated answers with their question, JSON export).
+- **Conversation export** to Markdown or JSON from the chat top bar.
+- **Pipeline alerts:** a banner (and a dot on *Logs*) when the last run failed, ended with errors, is stuck, or no scrape happened for `PIPELINE_STALE_HOURS`; failures can also be pushed to a Slack/Discord-compatible webhook.
 - **Scheduled pipeline:** scrape → chunk → embed once a day, no manual commands.
 - **CI:** GitHub Actions builds both images, runs the test suite against a real Postgres (pgvector), and publishes the images to GHCR.
 
@@ -75,7 +87,15 @@ PIPELINE_TZ=America/Sao_Paulo
 PIPELINE_SCRAPE_DAYS=2
 PIPELINE_EMBED_BATCH_SIZE=32
 PIPELINE_RUN_ON_START=false
+PIPELINE_STALE_HOURS=36
+PIPELINE_ALERT_WEBHOOK_URL=      # Slack/Discord-compatible incoming webhook; empty = no push alert
+
+# Reranker (empty = disabled)
+RERANK_MODEL=                    # e.g. BAAI/bge-reranker-v2-m3 (multilingual cross-encoder)
+RERANK_CANDIDATES=20             # candidates fetched before reranking down to 5
 ```
+
+`RERANK_MODEL` is downloaded by PostgresML on first use (needs internet from the `db` container and adds CPU latency per question). If the call fails, retrieval silently falls back to the un-reranked order. Compare before enabling: `python -m app.evaluation.run_eval --rerank-model BAAI/bge-reranker-v2-m3`.
 
 Embeddings are generated inside Postgres by PostgresML, so no external embedding API key is needed.
 
@@ -184,7 +204,7 @@ docker compose exec api python -m app.evaluation.run_eval            # top-5; de
 docker compose exec api python -m app.evaluation.run_eval --k 3
 ```
 
-The question set lives in `backend/app/evaluation/dataset.json`: identifier questions ("Resolução BCB nº 598") and natural-language ones, each with the document(s) that must be retrieved (matched as whole numbers in the title). The script runs every question twice, **semantic-only** and **hybrid**, and prints hit-rate@k and MRR overall, for verified questions only, and per question type.
+The question set lives in `backend/app/evaluation/dataset.json`: identifier questions ("Resolução BCB nº 598") and natural-language ones, each with the document(s) that must be retrieved (matched as whole numbers in the title). The script runs every question in **semantic-only** and **hybrid** mode, plus **hybrid+rerank** when `RERANK_MODEL` (or `--rerank-model`) is set, and prints hit-rate@k and MRR overall, for verified questions only, and per question type.
 
 ### Results
 
@@ -198,7 +218,7 @@ Corpus: BCB Resoluções from the last 30 days plus Comunicados CCS (backfilled)
 How to read it:
 
 - The hybrid step fixes exactly what embeddings are bad at: exact document numbers ("Resolução BCB nº 598"). Semantic-only misses 4 of 8 of those because the e5 model cannot tell 589 from 598.
-- It does not change natural-language questions (same score in both modes), as expected. Their MRR of 0.69 (the right document at rank #1 to #4) is the room left for a reranker.
+- It does not change natural-language questions (same score in both modes), as expected. Their MRR of 0.69 (the right document at rank #1 to #4) is the room left for the reranker; run `--rerank-model` to measure it (results not yet recorded here).
 - The identifier questions are the ones the hybrid step was designed around, so that gap is a measured design validation, not an independent benchmark. The set is small (12 questions); treat the numbers as indicative until it grows.
 - The three natural-language questions marked unverified retrieve the documents I expected, but whether those documents truly answer them still needs a human read.
 
@@ -209,9 +229,15 @@ Entries with `"verified": false` are drafts whose expected document I could not 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/health` | Status, timestamp, embedding model |
-| POST | `/api/chat` | Body: `question`, `language` (`pt`/`en`), optional `conversation_id`. Returns `answer`, `sources`, `retrieved_chunks`, `conversation_id`. Logged to `query_logs` and persisted. |
+| POST | `/api/chat` | Body: `question`, `language` (`pt`/`en`), optional `conversation_id`, `doc_type`, `since_days`, `regenerate_of` (assistant message id to replace). Returns `answer`, `sources`, `retrieved_chunks`, `conversation_id`. Logged to `query_logs` and persisted. |
+| GET | `/api/admin/stats/timeseries` | `?days=14` per-day series for the Logs charts |
+| POST | `/api/chat/stream` | Same input as `/api/chat`, answer as Server-Sent Events: `meta` (sources, conversation_id) → `delta`* → `done` (message_id, grounding, usage) or `error` |
+| POST | `/api/messages/{id}/feedback` | Body: `value` (`1`, `-1`, `0` to clear), optional `comment` |
+| GET | `/api/conversations/{id}/export` | `?format=md` or `json`, downloaded as an attachment |
+| GET | `/api/admin/feedback` | 👍/👎 counts, satisfaction and rated answers (`value`, `limit`, `offset`) |
+| GET | `/api/admin/pipeline/health` | `ok`/`warning`/`error` plus the list of issues (failed, with errors, stuck, stale) |
 | GET | `/api/documents` | Latest ingested documents |
-| GET | `/api/conversations` | List conversations (title, last update) |
+| GET | `/api/conversations` | List conversations (title, last update); `?q=` text in any message, `?days=` recent activity |
 | GET | `/api/conversations/{id}` | Full message history |
 | DELETE | `/api/conversations/{id}` | Delete a conversation |
 | GET | `/api/admin/documents` | Dashboard data: summary, counts by type, paginated documents with chunk/embedding counts (`q`, `doc_type`, `limit`, `offset`) |
@@ -234,10 +260,10 @@ Schema is managed with Alembic (`backend/migrations`; `0001` initial, `0002` log
 |---|---|
 | `documents` | One row per normativo: `source`, `url` (unique), `title`, `doc_type`, `published_at`, `language`, `content_hash`, `raw_text`, `fetched_at` |
 | `chunks` | `document_id`, `chunk_index`, `text`, `token_count`, `embedding vector(768)`, `embedding_model`; HNSW cosine index |
-| `conversations` / `messages` | Persistent chat history, with cited `sources` as JSONB |
+| `conversations` / `messages` | Persistent chat history: cited `sources` and faithfulness `grounding` as JSONB, plus `feedback` (1/-1), `feedback_comment`, `feedback_at` on assistant messages |
 | `pipeline_runs` | One row per stage execution: status, duration, items total/ok/failed, params, error |
 | `pipeline_events` | Per-item warnings/errors of a run (document/chunk id, message, details) |
-| `query_logs` | One row per question: answer, retrieved chunks and scores, models, tokens, `cost_usd`, latency, status |
+| `query_logs` | One row per question: answer, retrieved chunks and scores, models, tokens, `cost_usd`, `grounding`, latency, status |
 | `ingest_runs` | Legacy table, no longer written (superseded by `pipeline_runs`) |
 
 Quick query:
@@ -275,10 +301,16 @@ docker compose exec -e RUN_DB_TESTS=1 api python -m pytest -q    # also runs the
 | `test_answering_usage.py` | History reaches the Anthropic call, usage returned (Anthropic client faked) |
 | `test_scheduler.py` | Next-run calculation, DST, time parsing |
 | `test_pipeline.py` | Stage runner: exit codes and exceptions never stop later stages |
+| `test_faithfulness.py` | Citation/number/support checks of the faithfulness heuristic |
+| `test_rerank.py` | Reranker ordering (pure part) |
+| `test_health.py` | Pipeline health rules (failed, errors, stuck, stale) |
+| `test_timeseries.py` | Day-gap filling of the chart series |
+| `test_export.py` | Markdown/JSON conversation export |
+| `test_stream_answer.py` | Streaming generator with a fake async Anthropic client |
 | `test_eval_metrics.py` | Hit-rate/MRR maths and dataset validity |
 | `test_bcb_normativos.py`, `test_bcb_fetch_fallback.py` | Scraper parsing and endpoint fallback (HTTP mocked) |
 | `test_chunker.py`, `test_rag.py` | Chunker (including the last-article regression) and context building |
-| `test_db_admin_api.py` | Admin API (runs, events, queries, stats, documents dashboard), title-number SQL and conversation history against real Postgres |
+| `test_db_admin_api.py` | Admin API (runs, events, queries, stats, documents dashboard), title-number SQL conversation history/search, regenerate, feedback, export, timeseries and pipeline health against real Postgres |
 
 The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in the database `DATABASE_URL` points to, so prefer a scratch database. In CI that is the service container.
 
@@ -293,14 +325,18 @@ The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in 
 - **Resoluções BCB** return an empty `conteudo` from `exibeoutrasnormas`; the scraper now falls back to `exibenormativo` and other spellings of the type, and the error message lists what was tried. Check **Logs → Execuções** if a run still reports `done_with_errors`.
 - The corpus is thin: Resoluções cover only the last 30 days; older ones need a backfill (`scrape --days N --source bcb_resolucoes`, then `chunk` and `embed`).
 - The evaluation set is small (12 questions, 3 unverified) and its identifier questions are the ones hybrid retrieval was designed for; treat the scores as indicative.
-- Natural-language retrieval has no reranker yet (MRR 0.69).
+- The reranker (`pgml.rank`) and SSE streaming were written without being exercised end to end in the author's environment: measure with `run_eval --rerank-model` before relying on it, and expect extra latency on CPU.
+- Stopping an answer keeps the partial text on screen only: nothing is saved server-side for an interrupted stream.
+- The faithfulness check is lexical (number and term overlap with the cited passage). It catches wrong citations and invented numbers, not paraphrased claims that are simply wrong.
+- Migrations run automatically when the `api` container starts (`alembic upgrade head`).
 - `/api/admin/*` has no authentication.
 - The CI workflow has not been observed running end to end; the database tests passed locally in Docker.
 
 ## Roadmap
 
 - Grow the evaluation set to 30-50 verified questions, including natural-language ones on Resoluções.
-- Try a reranker and report the before/after MRR.
+- Run the reranker evaluation and record the before/after MRR.
+- LLM-as-judge faithfulness on a sample, and a feedback-driven eval set (👎 answers become test questions).
 - Backfill more history.
 - Authentication on `/api/admin/*`.
 - Deployed demo and screenshots.

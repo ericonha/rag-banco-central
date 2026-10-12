@@ -112,3 +112,45 @@ export interface DocumentsDashboard {
   items: DocumentRow[];
 }
 
+
+export interface FeedbackItem {
+  id: number;
+  conversation_id: string;
+  feedback: 1 | -1;
+  feedback_comment: string | null;
+  feedback_at: string | null;
+  question: string | null;
+  answer: string;
+  grounding: { score: number; ok: boolean } | null;
+}
+
+export interface FeedbackDashboard {
+  up: number;
+  down: number;
+  total: number;
+  satisfaction: number | null;
+  items: FeedbackItem[];
+}
+
+export interface PipelineHealth {
+  status: 'ok' | 'warning' | 'error';
+  issues: { stage: string; severity: 'warning' | 'error'; kind: string; message: string; at: string }[];
+  last_run_at: string | null;
+}
+
+export interface TimeseriesPoint {
+  day: string;
+  queries: number;
+  errors: number;
+  avg_latency_ms: number;
+  tokens: number;
+  cost_usd: number;
+  ungrounded: number;
+  up: number;
+  down: number;
+}
+
+export interface Timeseries {
+  days: number;
+  points: TimeseriesPoint[];
+}

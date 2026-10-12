@@ -27,7 +27,7 @@ services:
       - ./backend/migrations:/srv/migrations
       - ./check_docs.py:/srv/check_docs.py:ro
       - ./tests:/srv/tests
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/srv/app"]
+    command: ["sh", "-c", "until alembic upgrade head; do echo waiting for db; sleep 3; done; exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /srv/app"]
 
   # Daily scrape -> chunk -> embed. Schedule/params come from PIPELINE_* in .env.
   pipeline:

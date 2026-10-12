@@ -5,6 +5,8 @@
 import { useEffect, useState } from 'react';
 import { ApiClient } from '../services/api';
 import type {
+  FeedbackDashboard,
+  Timeseries,
   Paginated,
   PipelineEvent,
   PipelineRun,
@@ -12,6 +14,7 @@ import type {
   QueryLog,
   QueryStats,
 } from '../types/admin';
+import { BarChart, LineChart } from '../components/Charts';
 import './Logs.css';
 
 const PAGE_SIZE = 15;
@@ -406,6 +409,131 @@ async function fetchAll<T>(load: (page: number) => Promise<Paginated<T>>): Promi
   return items;
 }
 
+const C_OK = 'var(--chart-1, #0b7a6b)';
+const C_BAD = 'var(--chart-bad, #c0392b)';
+const C_WARN = 'var(--chart-warn, #d98e04)';
+const C_INFO = 'var(--chart-info, #2f6fc5)';
+
+function TrendsTab() {
+  const [days, setDays] = useState(14);
+  const [data, setData] = useState<Timeseries | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setData(null);
+    ApiClient.getTimeseries(days)
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [days]);
+
+  if (error) return <div className="error-box">{error}</div>;
+  if (!data) return <p className="muted">Carregando…</p>;
+
+  const p = data.points;
+  const labels = p.map((x) => x.day);
+  const hasCost = p.some((x) => x.cost_usd > 0);
+  const empty = p.every((x) => x.queries === 0);
+
+  return (
+    <div>
+      <div className="filters">
+        {[7, 14, 30].map((d) => (
+          <button key={d} type="button" className={days === d ? 'active' : ''} onClick={() => setDays(d)}>
+            {d} dias
+          </button>
+        ))}
+      </div>
+      {empty && <p className="muted">Nenhuma consulta no período.</p>}
+      <div className="charts">
+        <BarChart
+          title="Consultas por dia"
+          labels={labels}
+          series={[
+            { name: 'ok', color: C_OK, values: p.map((x) => x.queries - x.errors) },
+            { name: 'erro', color: C_BAD, values: p.map((x) => x.errors) },
+          ]}
+        />
+        <LineChart
+          title="Latência média (ms)"
+          labels={labels}
+          fmt={(n) => String(Math.round(n))}
+          series={[{ name: 'total', color: C_INFO, values: p.map((x) => x.avg_latency_ms) }]}
+        />
+        <LineChart
+          title={hasCost ? 'Custo estimado (USD)' : 'Tokens por dia'}
+          labels={labels}
+          fmt={hasCost ? (n) => `$${n.toFixed(n < 1 ? 3 : 2)}` : (n) => String(Math.round(n))}
+          series={[
+            { name: hasCost ? 'custo' : 'tokens', color: C_WARN, values: p.map((x) => (hasCost ? x.cost_usd : x.tokens)) },
+          ]}
+        />
+        <BarChart
+          title="Feedback e fidelidade"
+          labels={labels}
+          series={[
+            { name: '👍', color: C_OK, values: p.map((x) => x.up) },
+            { name: '👎', color: C_BAD, values: p.map((x) => x.down) },
+            { name: 'sem respaldo', color: C_WARN, values: p.map((x) => x.ungrounded) },
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
+
+function FeedbackTab() {
+  const [data, setData] = useState<FeedbackDashboard | null>(null);
+  const [filter, setFilter] = useState<number | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    ApiClient.getFeedback({ value: filter, limit: 100 })
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [filter]);
+
+  if (error) return <div className="error-box">{error}</div>;
+  if (!data) return <div className="muted">Carregando…</div>;
+
+  return (
+    <div>
+      <div className="stat-grid">
+        <StatCard label="👍 Úteis" value={String(data.up)} />
+        <StatCard label="👎 Não úteis" value={String(data.down)} />
+        <StatCard
+          label="Satisfação"
+          value={data.satisfaction === null ? '—' : `${Math.round(data.satisfaction * 100)}%`}
+        />
+      </div>
+      <div className="feedback-filter">
+        {[undefined, 1, -1].map((v) => (
+          <button key={String(v)} type="button" className={filter === v ? 'active' : ''} onClick={() => setFilter(v)}>
+            {v === undefined ? 'Todos' : v === 1 ? '👍' : '👎'}
+          </button>
+        ))}
+      </div>
+      {data.items.length === 0 ? (
+        <p className="muted">Nenhuma avaliação ainda.</p>
+      ) : (
+        <ul className="feedback-list">
+          {data.items.map((item) => (
+            <li key={item.id}>
+              <div className="feedback-head">
+                <span>{item.feedback === 1 ? '👍' : '👎'}</span>
+                <time>{item.feedback_at ? new Date(item.feedback_at).toLocaleString() : ''}</time>
+                {item.grounding && !item.grounding.ok && <span className="chip-warn">fidelidade</span>}
+              </div>
+              <p className="feedback-q">{item.question}</p>
+              <p className="feedback-a">{item.answer.length > 400 ? `${item.answer.slice(0, 400)}…` : item.answer}</p>
+              {item.feedback_comment && <p className="feedback-c">“{item.feedback_comment}”</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function downloadJson(name: string, payload: unknown): void {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -417,7 +545,7 @@ function downloadJson(name: string, payload: unknown): void {
 }
 
 export function Logs() {
-  const [tab, setTab] = useState<'runs' | 'queries'>('runs');
+  const [tab, setTab] = useState<'runs' | 'queries' | 'feedback' | 'trends'>('runs');
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -431,6 +559,10 @@ export function Logs() {
           runs.map(async (r) => ({ ...r, events: await ApiClient.getRunEvents(r.id).catch(() => []) })),
         );
         downloadJson('pipeline-runs', withEvents);
+      } else if (tab === 'trends') {
+        downloadJson('timeseries', await ApiClient.getTimeseries(90));
+      } else if (tab === 'feedback') {
+        downloadJson('feedback', await ApiClient.getFeedback({ limit: 500 }));
       } else {
         const queries = await fetchAll((page) =>
           ApiClient.getQueryLogs({ hours: 24 * 365, page, page_size: EXPORT_PAGE }),
@@ -453,12 +585,18 @@ export function Logs() {
         <button role="tab" aria-selected={tab === 'queries'} className={tab === 'queries' ? 'active' : ''} onClick={() => setTab('queries')}>
           Consultas
         </button>
+        <button role="tab" aria-selected={tab === 'trends'} className={tab === 'trends' ? 'active' : ''} onClick={() => setTab('trends')}>
+          Tendências
+        </button>
+        <button role="tab" aria-selected={tab === 'feedback'} className={tab === 'feedback' ? 'active' : ''} onClick={() => setTab('feedback')}>
+          Feedback
+        </button>
         <button type="button" className="export-btn" disabled={exporting} onClick={exportJson}>
           {exporting ? 'Exportando…' : 'Exportar JSON'}
         </button>
       </div>
       {exportError && <div className="error-box">{exportError}</div>}
-      <div className="logs-body">{tab === 'runs' ? <RunsTab /> : <QueriesTab />}</div>
+      <div className="logs-body">{tab === 'runs' ? <RunsTab /> : tab === 'feedback' ? <FeedbackTab /> : tab === 'trends' ? <TrendsTab /> : <QueriesTab />}</div>
     </div>
   );
 }

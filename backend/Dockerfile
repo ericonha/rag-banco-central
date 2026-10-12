@@ -23,4 +23,4 @@ RUN chmod -R a+rX /srv
 RUN useradd --create-home appuser
 USER appuser
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "until alembic upgrade head; do echo waiting for db; sleep 3; done; exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

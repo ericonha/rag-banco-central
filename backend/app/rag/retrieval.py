@@ -11,6 +11,8 @@ from typing import Any
 
 import psycopg
 
+from app.rag.rerank import rerank_chunks
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,6 +42,7 @@ async def _chunks_by_title_number(
     numbers: list[str],
     limit: int,
     doc_type_filter: str | None,
+    since_days: int | None = None,
 ) -> list[dict[str, Any]]:
     """Chunks of documents whose title contains one of the given numbers (exact match)."""
     sql = r"""
@@ -53,9 +56,13 @@ async def _chunks_by_title_number(
     if doc_type_filter:
         sql += " AND d.doc_type = %s"
         params.append(doc_type_filter)
+    if since_days:
+        sql += " AND d.published_at >= now() - make_interval(days => %s)"
+        params.append(since_days)
     sql += " ORDER BY d.published_at DESC, c.chunk_index LIMIT %s"
     params.append(limit)
-    return [dict(row) for row in await (await conn.execute(sql, params)).fetchall()]
+    rows = await (await conn.execute(sql, params)).fetchall()
+    return [{**dict(row), "pinned": True} for row in rows]
 
 
 async def retrieve_chunks(
@@ -66,6 +73,9 @@ async def retrieve_chunks(
     k: int = 5,
     doc_type_filter: str | None = None,
     hybrid: bool = True,
+    rerank_model: str = "",
+    rerank_candidates: int = 20,
+    since_days: int | None = None,
 ) -> list[dict[str, Any]]:
     """
     Retrieve top-k chunks most similar to the question.
@@ -81,18 +91,28 @@ async def retrieve_chunks(
         k: Number of top chunks to return
         doc_type_filter: Optional doc_type to filter by (e.g. "Comunicado")
         hybrid: also pin chunks of documents whose title number appears in the question
+        rerank_model: pgml.rank cross-encoder; when set, `rerank_candidates` chunks are fetched
+            and reordered, then cut to k (pinned exact matches stay first)
+        rerank_candidates: how many candidates to fetch when reranking
+        since_days: only documents published in the last N days
     
     Returns:
         List of dicts with keys: id, text, document_id, title, url, published_at, doc_type, distance
     """
     
-    # Build the SQL query with optional doc_type filter
+    fetch_k = max(k, rerank_candidates) if rerank_model else k
+
     where_clause = "WHERE c.embedding IS NOT NULL"
+    filter_params: list[Any] = []
     if doc_type_filter:
         where_clause += " AND d.doc_type = %s"
-    
+        filter_params.append(doc_type_filter)
+    if since_days:
+        where_clause += " AND d.published_at >= now() - make_interval(days => %s)"
+        filter_params.append(since_days)
+
     sql = f"""
-    SELECT 
+    SELECT
         c.id,
         c.text,
         c.document_id,
@@ -107,27 +127,25 @@ async def retrieve_chunks(
     ORDER BY distance ASC
     LIMIT %s
     """
-    
-    if doc_type_filter:
-        rows = await (
-            await conn.execute(sql, (question, doc_type_filter, k))
-        ).fetchall()
-    else:
-        rows = await (
-            await conn.execute(sql, (question, k))
-        ).fetchall()
-    
+
+    rows = await (await conn.execute(sql, (question, *filter_params, fetch_k))).fetchall()
+
     result = [dict(row) for row in rows]
 
     # Hybrid step: if the question names a document number (e.g. "Comunicado 34.977"),
     # put that document's chunks first, then fill the rest with the semantic hits.
     numbers = _document_numbers(question) if hybrid else []
     if numbers:
-        exact = await _chunks_by_title_number(conn, numbers, k, doc_type_filter)
+        exact = await _chunks_by_title_number(conn, numbers, fetch_k, doc_type_filter, since_days)
         if exact:
             seen = {c["id"] for c in exact}
-            result = (exact + [c for c in result if c["id"] not in seen])[:k]
+            result = (exact + [c for c in result if c["id"] not in seen])[:fetch_k]
             logger.info("Title-number match %s: %d exact chunks", numbers, len(exact))
+
+    if rerank_model:
+        result = await rerank_chunks(conn, question, result, rerank_model, k)
+    else:
+        result = result[:k]
 
     logger.info(
         "Retrieved %d chunks for question (top distance: %.4f)",

@@ -5,6 +5,7 @@
 import type {
   ChatRequest,
   ChatResponse,
+  ChatStreamHandlers,
   ConversationDetail,
   ConversationSummary,
   DocumentRef,
@@ -12,6 +13,9 @@ import type {
 } from '../types';
 import type {
   DocumentsDashboard,
+  FeedbackDashboard,
+  PipelineHealth,
+  Timeseries,
   Paginated,
   PipelineEvent,
   PipelineRun,
@@ -37,6 +41,24 @@ function toQuery(params: Record<string, string | number | undefined>): string {
   }
   const text = qs.toString();
   return text ? `?${text}` : '';
+}
+
+/** The stream endpoint could not be used at all (nothing was received) — safe to fall back. */
+export class StreamUnavailableError extends Error {}
+
+function dispatchSse(raw: string, handlers: ChatStreamHandlers): void {
+  let event = 'message';
+  const data: string[] = [];
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+  }
+  if (!data.length) return;
+  const payload = JSON.parse(data.join('\n'));
+  if (event === 'meta') handlers.onMeta?.(payload);
+  else if (event === 'delta') handlers.onDelta?.(payload.text);
+  else if (event === 'done') handlers.onDone?.(payload);
+  else if (event === 'error') throw new Error(payload.detail || 'Stream error');
 }
 
 export class ApiClient {
@@ -65,6 +87,67 @@ export class ApiClient {
     return response.json();
   }
 
+  /**
+   * Streamed chat (Server-Sent Events). Resolves when the stream ends; rejects on transport
+   * errors or an `error` event. `onMeta` fires first, so callers can tell whether anything
+   * arrived before a failure.
+   */
+  static async chatStream(
+    request: ChatRequest,
+    handlers: ChatStreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(request),
+      signal,
+    });
+    if (!response.ok || !response.body) {
+      const error = await response.text().catch(() => '');
+      throw new StreamUnavailableError(`Chat request failed: ${error || response.statusText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const raw = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        dispatchSse(raw, handlers);
+      }
+    }
+  }
+
+  static async sendFeedback(messageId: number, value: -1 | 0 | 1, comment?: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/messages/${messageId}/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value, comment }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to save feedback: ${response.statusText}`);
+    }
+  }
+
+  /** Browser download URL for a conversation export. */
+  static exportUrl(conversationId: string, format: 'md' | 'json'): string {
+    return `${API_BASE_URL}/conversations/${conversationId}/export?format=${format}`;
+  }
+
+  static getFeedback(params: { value?: number; limit?: number; offset?: number } = {}): Promise<FeedbackDashboard> {
+    return getJson(`/admin/feedback${toQuery(params)}`, 'Failed to fetch feedback');
+  }
+
+  static getPipelineHealth(): Promise<PipelineHealth> {
+    return getJson('/admin/pipeline/health', 'Failed to fetch pipeline health');
+  }
+
   static async getDocuments(limit: number = 20): Promise<DocumentRef[]> {
     const response = await fetch(`${API_BASE_URL}/documents?limit=${limit}`);
     if (!response.ok) {
@@ -77,8 +160,12 @@ export class ApiClient {
     return getJson(`/conversations/${conversationId}`, 'Failed to fetch conversation');
   }
 
-  static listConversations(): Promise<ConversationSummary[]> {
-    return getJson('/conversations', 'Failed to fetch conversations');
+  static listConversations(params: { q?: string; days?: number } = {}): Promise<ConversationSummary[]> {
+    return getJson(`/conversations${toQuery(params)}`, 'Failed to fetch conversations');
+  }
+
+  static getTimeseries(days = 14): Promise<Timeseries> {
+    return getJson(`/admin/stats/timeseries${toQuery({ days })}`, 'Failed to fetch timeseries');
   }
 
   static async deleteConversation(conversationId: string): Promise<void> {

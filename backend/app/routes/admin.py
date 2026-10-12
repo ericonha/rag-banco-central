@@ -16,7 +16,10 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
 from app.db.session import get_conn
+from app.observability.health import evaluate_health
+from app.observability.timeseries import build_timeseries
 
 logger = logging.getLogger("admin")
 
@@ -460,3 +463,67 @@ async def list_documents_dashboard(
         logger.error("Error building documents dashboard: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
+
+
+@router.get("/pipeline/health")
+async def pipeline_health():
+    """Status of the automated pipeline: failures, stuck runs and stale data."""
+    try:
+        async with get_conn() as conn:
+            rows = await (
+                await conn.execute(
+                    """
+                    SELECT DISTINCT ON (stage) stage, status, started_at, items_failed, items_total
+                    FROM pipeline_runs
+                    ORDER BY stage, started_at DESC
+                    """
+                )
+            ).fetchall()
+    except Exception as exc:
+        logger.error("Error evaluating pipeline health: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    return evaluate_health(
+        [dict(r) for r in rows], datetime.now(tz=timezone.utc), get_settings().pipeline_stale_hours
+    )
+
+
+@router.get("/stats/timeseries")
+async def get_timeseries(days: int = Query(14, ge=1, le=90)):
+    """Per-day series for the Logs charts: queries, errors, latency, tokens, cost, 👍/👎."""
+    try:
+        async with get_conn() as conn:
+            q_rows = await (
+                await conn.execute(
+                    """
+                    SELECT created_at::date AS day,
+                           COUNT(*) AS queries,
+                           COUNT(*) FILTER (WHERE status = 'error') AS errors,
+                           COALESCE(AVG(latency_total_ms), 0) AS avg_latency_ms,
+                           COALESCE(SUM(COALESCE(tokens_in, 0) + COALESCE(tokens_out, 0)), 0) AS tokens,
+                           COALESCE(SUM(cost_usd), 0) AS cost_usd,
+                           COUNT(*) FILTER (WHERE grounding IS NOT NULL AND (grounding->>'ok')::boolean = false)
+                               AS ungrounded
+                    FROM query_logs
+                    WHERE created_at >= (now()::date - %s::int)
+                    GROUP BY 1
+                    """,
+                    (days - 1,),
+                )
+            ).fetchall()
+            f_rows = await (
+                await conn.execute(
+                    """
+                    SELECT feedback_at::date AS day,
+                           COUNT(*) FILTER (WHERE feedback = 1) AS up,
+                           COUNT(*) FILTER (WHERE feedback = -1) AS down
+                    FROM messages
+                    WHERE feedback IS NOT NULL AND feedback_at >= (now()::date - %s::int)
+                    GROUP BY 1
+                    """,
+                    (days - 1,),
+                )
+            ).fetchall()
+    except Exception as exc:
+        logger.error("Error building timeseries: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"days": days, "points": build_timeseries([dict(r) for r in q_rows], [dict(r) for r in f_rows], days)}

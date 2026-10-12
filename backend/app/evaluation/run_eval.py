@@ -1,5 +1,5 @@
 """
-Retrieval evaluation: semantic-only vs hybrid (title-number match + semantic).
+Retrieval evaluation: semantic-only vs hybrid (title-number match + semantic) vs hybrid+rerank (optional).
 
 Usage (inside the api container):
     python -m app.evaluation.run_eval [--k 5] [--dataset PATH] [--out /tmp/eval_results.json]
@@ -21,15 +21,24 @@ from app.evaluation.metrics import first_hit_rank, group_summary, summarize
 from app.rag.retrieval import retrieve_chunks
 
 DEFAULT_DATASET = Path(__file__).with_name("dataset.json")
-MODES = {"semantic": False, "hybrid": True}
 
 
-async def evaluate(questions: list[dict], k: int) -> list[dict]:
+def build_modes(rerank_model: str = "") -> dict[str, tuple[bool, str]]:
+    """mode name -> (hybrid, rerank_model). The rerank mode only exists when a model is set."""
+    modes: dict[str, tuple[bool, str]] = {"semantic": (False, ""), "hybrid": (True, "")}
+    if rerank_model:
+        modes["hybrid+rerank"] = (True, rerank_model)
+    return modes
+
+
+async def evaluate(
+    questions: list[dict], k: int, modes: dict[str, tuple[bool, str]], rerank_candidates: int = 20
+) -> list[dict]:
     settings = get_settings()
     rows: list[dict] = []
     async with get_conn() as conn:
         for q in questions:
-            for mode, hybrid in MODES.items():
+            for mode, (hybrid, rerank_model) in modes.items():
                 chunks = await retrieve_chunks(
                     conn,
                     question=q["question"],
@@ -37,6 +46,8 @@ async def evaluate(questions: list[dict], k: int) -> list[dict]:
                     embedding_dim=settings.embedding_dim,
                     k=k,
                     hybrid=hybrid,
+                    rerank_model=rerank_model,
+                    rerank_candidates=rerank_candidates,
                 )
                 titles = [c["title"] for c in chunks]
                 rows.append(
@@ -54,16 +65,16 @@ async def evaluate(questions: list[dict], k: int) -> list[dict]:
     return rows
 
 
-def _print_report(rows: list[dict], k: int) -> dict:
+def _print_report(rows: list[dict], k: int, modes: dict) -> dict:
     report: dict = {"k": k, "modes": {}}
-    print(f"\n{'question':<16} {'type':<11} {'ok':<3} " + "  ".join(f"{m:>8}" for m in MODES))
+    print(f"\n{'question':<16} {'type':<11} {'ok':<3} " + "  ".join(f"{m:>8}" for m in modes))
     by_q: dict[str, dict[str, dict]] = {}
     for r in rows:
         by_q.setdefault(r["id"], {})[r["mode"]] = r
     for qid, modes in by_q.items():
         first = next(iter(modes.values()))
         cells = [
-            f"{('#' + str(modes[m]['rank'])) if modes[m]['rank'] else 'miss':>8}" for m in MODES
+            f"{('#' + str(modes[m]['rank'])) if modes[m]['rank'] else 'miss':>8}" for m in modes
         ]
         flag = "yes" if first["verified"] else "?"
         print(f"{qid:<16} {first['type']:<11} {flag:<3} " + "  ".join(cells))
@@ -76,7 +87,7 @@ def _print_report(rows: list[dict], k: int) -> dict:
             print(f"  [{r['mode']}] {r['id']}: {r['expected']} -> {distinct or 'nothing'}")
 
     print(f"\nhit-rate@{k} / MRR   (verified = expected document confirmed in the DB)")
-    for mode in MODES:
+    for mode in modes:
         mrows = [r for r in rows if r["mode"] == mode]
         vrows = [r for r in mrows if r["verified"]]
         overall = summarize([r["rank"] for r in mrows])
@@ -96,12 +107,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate retrieval quality")
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument(
+        "--rerank-model",
+        default=None,
+        help="also evaluate hybrid+rerank with this model (default: RERANK_MODEL from the environment)",
+    )
     parser.add_argument("--out", type=Path, default=Path("/tmp/eval_results.json"))
     args = parser.parse_args()
 
     questions = json.loads(args.dataset.read_text(encoding="utf-8"))["questions"]
-    rows = asyncio.run(evaluate(questions, args.k))
-    report = _print_report(rows, args.k)
+    settings = get_settings()
+    rerank_model = settings.rerank_model if args.rerank_model is None else args.rerank_model
+    modes = build_modes(rerank_model)
+    rows = asyncio.run(evaluate(questions, args.k, modes, settings.rerank_candidates))
+    report = _print_report(rows, args.k, modes)
     try:
         args.out.write_text(
             json.dumps({"summary": report, "rows": rows}, ensure_ascii=False, indent=2),

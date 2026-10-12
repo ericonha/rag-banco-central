@@ -244,3 +244,119 @@
 .tabs .export-btn:disabled {
   opacity: 0.5;
 }
+
+/* Feedback tab */
+.feedback-filter {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.feedback-filter button {
+  padding: 5px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+.feedback-filter button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.feedback-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.feedback-list li {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.feedback-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.feedback-q {
+  margin: 6px 0 2px;
+  font-weight: 600;
+}
+.feedback-a,
+.feedback-c {
+  margin: 2px 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+}
+.feedback-c {
+  font-style: italic;
+}
+.chip-warn {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.filters button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Charts */
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
+  gap: 16px;
+}
+.chart {
+  margin: 0;
+  padding: 16px 18px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.chart figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.chart-legend {
+  display: flex;
+  gap: 12px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.chart-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border-radius: 2px;
+}
+.chart svg {
+  width: 100%;
+  height: auto;
+  margin-top: 6px;
+}
+.chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.chart-axis {
+  fill: var(--ink-3);
+  font-size: 12px;
+}
