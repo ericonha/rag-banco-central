@@ -10,16 +10,28 @@ from __future__ import annotations
 from app.scraping.bcb_normativos import BCBNormativosSource
 
 ALL_SOURCES: list[BCBNormativosSource] = [
-    # CCS Comunicados  (the first URL you gave us)
+    # CCS Comunicados
     BCBNormativosSource(
         source_name="bcb_comunicados_ccs",
         querytext="CCS",
         tipo_documento="Comunicado",
     ),
-    # Add more sources here, for example:
-    # BCBNormativosSource(
-    #     source_name="bcb_resolucoes_bcb",
-    #     querytext="*",
-    #     tipo_documento="Resolução BCB",
-    # ),
+    # BCB Resolutions (main regulations)
+    BCBNormativosSource(
+        source_name="bcb_resolucoes",
+        querytext="*",
+        tipo_documento="Resolução BCB",
+    ),
+    # Central Bank Circulars
+    BCBNormativosSource(
+        source_name="bcb_circulares",
+        querytext="*",
+        tipo_documento="Circular BCB",
+    ),
+    # Normative Instructions
+    BCBNormativosSource(
+        source_name="bcb_instrucoes_normativas",
+        querytext="*",
+        tipo_documento="Instrução Normativa",
+    ),
 ]
