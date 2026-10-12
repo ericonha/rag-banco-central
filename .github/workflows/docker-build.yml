@@ -1,4 +1,4 @@
-name: Build Docker images
+name: Build and publish Docker images
 
 on:
   push:
@@ -7,6 +7,11 @@ on:
   pull_request:
     branches:
       - main
+
+# GITHUB_TOKEN needs packages:write to push to ghcr.io (only used on pushes to main).
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build:
@@ -37,3 +42,25 @@ jobs:
 
       - name: Smoke test frontend image
         run: docker run --rm rag-banco-central-frontend:latest ls dist/index.html
+
+      # Publish only from main; pull requests just build and test.
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push images to ghcr.io
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          for name in api frontend; do
+            local_image="rag-banco-central-${name}"
+            remote_image="ghcr.io/${OWNER}/${local_image}"
+            docker tag "${local_image}:latest" "${remote_image}:latest"
+            docker tag "${local_image}:latest" "${remote_image}:${{ github.sha }}"
+            docker push "${remote_image}:latest"
+            docker push "${remote_image}:${{ github.sha }}"
+          done
