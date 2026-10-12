@@ -115,12 +115,23 @@ docker compose exec pipeline python -m app.worker.pipeline --days 7
 # Or one stage at a time
 docker compose exec api python -m app.worker.scrape --days 30
 # Backfill a single source far back (e.g. old Comunicados)
-docker compose exec api python -m app.worker.scrape --days 2000 --source bcb_comunicados_ccs
+docker compose exec api python -m app.worker.scrape --days 3650 --source bcb_comunicados_ccs
 docker compose exec api python -m app.worker.chunk
 docker compose exec api python -m app.worker.embed --batch-size 32
 ```
 
 Each stage exits with code 1 if any item failed, so it is safe to use in scripts.
+
+Other options:
+
+| Command | Use |
+|---|---|
+| `scrape --source NAME` (repeatable) | Limit a run to one source, e.g. to backfill old Comunicados without re-scraping everything. Unknown names fail with the list of valid ones. |
+| `chunk --rechunk` | Delete **all** chunks and rebuild them from `raw_text`. Run `embed` afterwards. Needed after changing the chunker. |
+
+### Chunking
+
+`backend/app/chunking/chunker.py` splits each document at its `Art. N` headers (a preamble before the first article is kept as its own section), packs sections into chunks of up to 800 tokens (target 650, counted with `tiktoken`), and splits oversized articles by sentence. Regression tests cover a past bug where the body of the last article of every document was dropped.
 
 Check what is in the database and what is vectorized:
 
@@ -266,10 +277,10 @@ docker compose exec -e RUN_DB_TESTS=1 api python -m pytest -q    # also runs the
 | `test_pipeline.py` | Stage runner: exit codes and exceptions never stop later stages |
 | `test_eval_metrics.py` | Hit-rate/MRR maths and dataset validity |
 | `test_bcb_normativos.py`, `test_bcb_fetch_fallback.py` | Scraper parsing and endpoint fallback (HTTP mocked) |
-| `test_chunker.py`, `test_rag.py` | Chunker and context building |
+| `test_chunker.py`, `test_rag.py` | Chunker (including the last-article regression) and context building |
 | `test_db_admin_api.py` | Admin API (runs, events, queries, stats, documents dashboard), title-number SQL and conversation history against real Postgres |
 
-`RUN_DB_TESTS=1` writes and deletes a few rows in the database `DATABASE_URL` points to, so prefer a scratch database. In CI that is the service container.
+The suite has about 57 tests. `RUN_DB_TESTS=1` writes and deletes a few rows in the database `DATABASE_URL` points to, so prefer a scratch database. In CI that is the service container.
 
 ## Development
 
@@ -280,12 +291,17 @@ docker compose exec -e RUN_DB_TESTS=1 api python -m pytest -q    # also runs the
 ## Known issues
 
 - **Resoluções BCB** return an empty `conteudo` from `exibeoutrasnormas`; the scraper now falls back to `exibenormativo` and other spellings of the type, and the error message lists what was tried. Check **Logs → Execuções** if a run still reports `done_with_errors`.
-- The evaluation set has a few unverified draft entries (`"verified": false`) and is small; treat the scores as indicative until it is extended.
-- The database tests and CI workflow were written without a Postgres available to run them locally; the first CI run is their first real execution.
+- The corpus is thin: Resoluções cover only the last 30 days; older ones need a backfill (`scrape --days N --source bcb_resolucoes`, then `chunk` and `embed`).
+- The evaluation set is small (12 questions, 3 unverified) and its identifier questions are the ones hybrid retrieval was designed for; treat the scores as indicative.
+- Natural-language retrieval has no reranker yet (MRR 0.69).
+- `/api/admin/*` has no authentication.
+- The CI workflow has not been observed running end to end; the database tests passed locally in Docker.
 
 ## Roadmap
 
-- Grow the evaluation set (30 to 50 verified questions) and try reranking.
+- Grow the evaluation set to 30-50 verified questions, including natural-language ones on Resoluções.
+- Try a reranker and report the before/after MRR.
+- Backfill more history.
 - Authentication on `/api/admin/*`.
 - Deployed demo and screenshots.
 
