@@ -9,6 +9,8 @@ from typing import Any
 
 from anthropic import Anthropic
 
+from app.rag.context import build_messages
+
 logger = logging.getLogger(__name__)
 
 # System prompt for the RAG assistant
@@ -44,67 +46,53 @@ def _build_context_from_chunks(chunks: list[dict[str, Any]]) -> str:
     return context
 
 
-def answer_question(
+def answer_question_with_usage(
     question: str,
     chunks: list[dict[str, Any]],
     language: str = "pt",
     anthropic_api_key: str = "",
     anthropic_model: str = "claude-opus-5-5",
-) -> tuple[str, list[dict[str, Any]]]:
+    history: list[dict[str, Any]] | None = None,
+) -> tuple[str, list[dict[str, Any]], dict[str, int | None]]:
     """
-    Answer a question using retrieved chunks.
-    
-    Args:
-        question: The user's question
-        chunks: Retrieved chunks from retrieve_chunks()
-        language: "pt" for Portuguese, "en" for English
-        anthropic_api_key: Anthropic API key
-        anthropic_model: Claude model to use
-    
-    Returns:
-        Tuple of (answer_text, sources_list)
-        sources_list: list of dicts with title, url, date, chunk_text
+    Answer a question using retrieved chunks and earlier turns of the conversation.
+
+    Returns (answer_text, sources, usage) where usage = {"tokens_in", "tokens_out"}
+    (None when the API did not report them).
     """
+    empty_usage: dict[str, int | None] = {"tokens_in": None, "tokens_out": None}
     if not chunks:
-        return "Nenhum documento relevante encontrado." if language == "pt" else "No relevant documents found.", []
-    
+        msg = "Nenhum documento relevante encontrado." if language == "pt" else "No relevant documents found."
+        return msg, [], empty_usage
+
     context = _build_context_from_chunks(chunks)
     system_prompt = SYSTEM_PROMPT_PT if language == "pt" else SYSTEM_PROMPT_EN
-    
-    # Prepare the user message
     user_message = f"""Pergunta: {question}
 
 {context}"""
-    
-    # Call Claude API
-    headers = {}
-    if anthropic_api_key and "anthropic-workspace-id" not in anthropic_api_key:
-        # If we have a separate workspace ID, add it as a header
-        # For now, just use the API key as-is; workspace ID would go here if needed
-        pass
+
     client = Anthropic(api_key=anthropic_api_key)
-    
-    logger.info("Calling Claude API: model=%s language=%s", anthropic_model, language)
-    
+    logger.info(
+        "Calling Claude API: model=%s language=%s history_msgs=%d",
+        anthropic_model, language, len(history or []),
+    )
+
     response = client.messages.create(
         model=anthropic_model,
         max_tokens=1024,
         system=system_prompt,
-        messages=[
-            {"role": "user", "content": user_message}
-        ],
+        messages=build_messages(history, user_message),
     )
-    
+
     # Handle both TextBlock and ThinkingBlock responses
     answer_text = ""
     for block in response.content:
-        if hasattr(block, 'text'):
+        if hasattr(block, "text"):
             answer_text = block.text
             break
     if not answer_text:
         answer_text = "Unable to generate answer"
-    
-    # Build sources list
+
     sources = [
         {
             "title": chunk["title"],
@@ -115,7 +103,26 @@ def answer_question(
         }
         for chunk in chunks
     ]
-    
-    logger.info("Generated answer with %d sources", len(sources))
-    
-    return answer_text, sources
+
+    usage_obj = getattr(response, "usage", None)
+    usage: dict[str, int | None] = {
+        "tokens_in": getattr(usage_obj, "input_tokens", None),
+        "tokens_out": getattr(usage_obj, "output_tokens", None),
+    }
+    logger.info("Generated answer with %d sources, usage=%s", len(sources), usage)
+    return answer_text, sources, usage
+
+
+def answer_question(
+    question: str,
+    chunks: list[dict[str, Any]],
+    language: str = "pt",
+    anthropic_api_key: str = "",
+    anthropic_model: str = "claude-opus-5-5",
+    history: list[dict[str, Any]] | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Backwards-compatible wrapper: (answer_text, sources) without usage."""
+    text, sources, _ = answer_question_with_usage(
+        question, chunks, language, anthropic_api_key, anthropic_model, history
+    )
+    return text, sources

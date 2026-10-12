@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     anthropic_model: str = ""
     embedding_model: str = ""
     embedding_dim: int = 0
+    # USD per million tokens; 0 = unknown (cost is then not recorded)
+    llm_price_input_per_mtok: float = 0.0
+    llm_price_output_per_mtok: float = 0.0
+    # how many previous messages (user+assistant) are sent to the LLM as context
+    history_max_messages: int = 6
 
 
 def get_settings() -> Settings:

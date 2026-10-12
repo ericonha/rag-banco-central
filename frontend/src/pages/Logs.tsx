@@ -32,6 +32,9 @@ const fmtMs = (ms?: number | null): string => {
 const fmtNum = (n?: number | null): string =>
   n == null ? '—' : Math.round(n).toLocaleString('pt-BR');
 
+const fmtUsd = (v: number): string =>
+  `US$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: v < 1 ? 4 : 2 })}`;
+
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 function StatusBadge({ status }: { status: string }) {
@@ -296,6 +299,11 @@ function QueriesTab() {
             value={stats.avg_tokens_in || stats.avg_tokens_out ? `${fmtNum(stats.avg_tokens_in)} / ${fmtNum(stats.avg_tokens_out)}` : '—'}
             hint="entrada / saída"
           />
+          <StatCard
+            label="Custo estimado"
+            value={stats.total_cost_usd > 0 ? fmtUsd(stats.total_cost_usd) : '—'}
+            hint={`${fmtNum(stats.total_tokens_in + stats.total_tokens_out)} tokens no total`}
+          />
         </div>
       )}
 
@@ -367,6 +375,12 @@ function QueryRows(props: { q: QueryLog; open: boolean; onToggle: () => void }) 
               <b>Modelos:</b> {q.embedding_model ?? '—'} · {q.llm_model ?? '—'} &nbsp;|&nbsp;
               <b>Busca:</b> {fmtMs(q.latency_retrieval_ms)} · <b>LLM:</b> {fmtMs(q.latency_llm_ms)}
             </div>
+            {(q.tokens_in != null || q.tokens_out != null) && (
+              <div className="detail-line">
+                <b>Tokens:</b> {fmtNum(q.tokens_in ?? 0)} entrada · {fmtNum(q.tokens_out ?? 0)} saída
+                {q.cost_usd != null && <> &nbsp;|&nbsp; <b>Custo:</b> {fmtUsd(q.cost_usd)}</>}
+              </div>
+            )}
             {q.retrieved && q.retrieved.length > 0 && (
               <div className="detail-line">
                 <b>Chunks recuperados:</b>{' '}

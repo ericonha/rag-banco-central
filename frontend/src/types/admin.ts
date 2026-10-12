@@ -45,6 +45,7 @@ export interface QueryLog {
   llm_model: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
+  cost_usd: number | null;
   latency_retrieval_ms: number | null;
   latency_llm_ms: number | null;
   latency_total_ms: number | null;
@@ -73,6 +74,9 @@ export interface QueryStats {
   avg_latency_total_ms: number;
   avg_tokens_in: number;
   avg_tokens_out: number;
+  total_tokens_in: number;
+  total_tokens_out: number;
+  total_cost_usd: number;
   queries_last_24h: number;
 }
 

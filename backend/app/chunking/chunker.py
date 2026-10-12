@@ -38,18 +38,18 @@ class PortugueseRegulationChunker:
         return len(self.encoding.encode(text))
 
     def _split_into_sections(self, text: str) -> list[str]:
-        """Split by articles; fall back to paragraphs."""
-        articles = ARTICLE_PATTERN.split(text)
-        if len(articles) > 1:
+        """Split by articles (each section starts at its "Art. N" header); fall back to paragraphs."""
+        matches = list(ARTICLE_PATTERN.finditer(text))
+        if matches:
             sections = []
-            parts = ARTICLE_PATTERN.findall(text)
-            for i, article in enumerate(articles):
-                if i == 0 and article.strip():
-                    sections.append(article)
-                elif i < len(parts):
-                    sections.append(parts[i - 1] + " " + article)
+            preamble = text[: matches[0].start()]
+            if preamble.strip():
+                sections.append(preamble)
+            for i, match in enumerate(matches):
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                sections.append(text[match.start():end])
             return [s.strip() for s in sections if s.strip()]
-        
+
         # Fall back to paragraphs
         paragraphs = text.split("\n\n")
         return [p.strip() for p in paragraphs if p.strip()]

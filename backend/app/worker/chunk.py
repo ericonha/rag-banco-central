@@ -2,10 +2,12 @@
 Chunk all documents and insert into the chunks table.
 
 Usage:
-    python -m app.worker.chunk
+    python -m app.worker.chunk             # only documents without chunks
+    python -m app.worker.chunk --rechunk   # delete ALL chunks and rebuild them (then run embed)
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import sys
@@ -24,12 +26,16 @@ logging.basicConfig(
 logger = logging.getLogger("worker.chunk")
 
 
-async def run() -> None:
-    """Chunk all unchunked documents with tracking."""
+async def run(rechunk: bool = False) -> None:
+    """Chunk all unchunked documents with tracking (rechunk=True discards existing chunks first)."""
     chunker = PortugueseRegulationChunker()
 
     async with get_conn() as conn:
-        async with track_run("chunk", {"chunk_size": 512}) as run:
+        async with track_run("chunk", {"chunk_size": 512, "rechunk": rechunk}) as run:
+            if rechunk:
+                await conn.execute("DELETE FROM chunks")
+                await conn.commit()
+                logger.warning("--rechunk: all existing chunks deleted; rebuilding")
             docs = await get_unchunked_documents(conn)
             logger.info("Found %d unchunked documents", len(docs))
 
@@ -72,7 +78,12 @@ async def run() -> None:
 
 
 def main() -> None:
-    asyncio.run(run())
+    parser = argparse.ArgumentParser(description="Chunk documents")
+    parser.add_argument(
+        "--rechunk", action="store_true", help="delete all chunks and rebuild them from raw_text"
+    )
+    args = parser.parse_args()
+    asyncio.run(run(rechunk=args.rechunk))
 
 
 if __name__ == "__main__":

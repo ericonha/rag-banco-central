@@ -65,6 +65,7 @@ async def retrieve_chunks(
     embedding_dim: int,
     k: int = 5,
     doc_type_filter: str | None = None,
+    hybrid: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Retrieve top-k chunks most similar to the question.
@@ -79,6 +80,7 @@ async def retrieve_chunks(
         embedding_dim: Vector dimension (e.g. 768)
         k: Number of top chunks to return
         doc_type_filter: Optional doc_type to filter by (e.g. "Comunicado")
+        hybrid: also pin chunks of documents whose title number appears in the question
     
     Returns:
         List of dicts with keys: id, text, document_id, title, url, published_at, doc_type, distance
@@ -119,7 +121,7 @@ async def retrieve_chunks(
 
     # Hybrid step: if the question names a document number (e.g. "Comunicado 34.977"),
     # put that document's chunks first, then fill the rest with the semantic hits.
-    numbers = _document_numbers(question)
+    numbers = _document_numbers(question) if hybrid else []
     if numbers:
         exact = await _chunks_by_title_number(conn, numbers, k, doc_type_filter)
         if exact:

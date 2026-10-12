@@ -6,12 +6,13 @@ Usage (inside the api/worker container):
     python -m app.worker.scrape              # last 7 days (default)
     python -m app.worker.scrape --days 30    # last 30 days
     python -m app.worker.scrape --days 1     # yesterday + today (daily cron)
+    python -m app.worker.scrape --days 2000 --source bcb_comunicados_ccs   # backfill one source
 
 The script:
   1. For each source, calls list_new(since) to get DocRefs.
   2. Fetches the full Document for each ref.
   3. Upserts into ``documents`` (skips unchanged).
-  4. Writes a ``pipeline_runs`` row with the outcome (with fallback to ``ingest_runs``).
+  4. Writes a ``pipeline_runs`` row with the outcome .
 """
 from __future__ import annotations
 
@@ -35,14 +36,21 @@ logging.basicConfig(
 logger = logging.getLogger("worker.scrape")
 
 
-async def run(days: int) -> None:
+async def run(days: int, sources: list[str] | None = None) -> None:
+    """Scrape `days` back. `sources` limits the run to those source_name values (default: all)."""
+    selected = [s for s in ALL_SOURCES if not sources or s.source_name in sources]
+    unknown = set(sources or []) - {s.source_name for s in ALL_SOURCES}
+    if unknown:
+        known = ", ".join(s.source_name for s in ALL_SOURCES)
+        logger.error("Unknown source(s): %s (known: %s)", ", ".join(sorted(unknown)), known)
+        sys.exit(2)
     since = datetime.now(tz=timezone.utc) - timedelta(days=days)
-    logger.info("Starting scrape run: since=%s, sources=%d", since.date(), len(ALL_SOURCES))
+    logger.info("Starting scrape run: since=%s, sources=%d", since.date(), len(selected))
 
     async with get_conn() as conn:
         # Use the new pipeline_runs tracking (with fallback to ingest_runs)
-        async with track_run("scrape", {"days": days}) as run:
-            for source in ALL_SOURCES:
+        async with track_run("scrape", {"days": days, "sources": [s.source_name for s in selected]}) as run:
+            for source in selected:
                 logger.info("[%s] listing new documents since %s…", source.source_name, since.date())
                 try:
                     refs = await source.list_new(since)
@@ -75,22 +83,6 @@ async def run(days: int) -> None:
             run.items_ok, run.items_failed, "ok" if run.items_failed == 0 else "done_with_errors",
         )
         
-        # Also write to ingest_runs for backward compatibility
-        try:
-            status = "done" if run.items_failed == 0 else "done_with_errors"
-            await conn.execute(
-                """
-                INSERT INTO ingest_runs (status, new_docs, errors, finished_at)
-                VALUES ($1, $2, $3, now())
-                """,
-                status,
-                run.items_ok,
-                None if run.items_failed == 0 else f"{run.items_failed} items failed",
-            )
-            await conn.commit()
-        except Exception as e:
-            logger.warning(f"Failed to write to ingest_runs (backward compat): {e}")
-        
         if run.items_failed > 0:
             sys.exit(1)
 
@@ -103,8 +95,15 @@ def main() -> None:
         default=7,
         help="How many days back to look (default: 7)",
     )
+    parser.add_argument(
+        "--source",
+        action="append",
+        dest="sources",
+        metavar="NAME",
+        help="only this source_name (repeatable), e.g. bcb_comunicados_ccs; default: all",
+    )
     args = parser.parse_args()
-    asyncio.run(run(args.days))
+    asyncio.run(run(args.days, args.sources))
 
 
 if __name__ == "__main__":

@@ -17,6 +17,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # Real Postgres (with pgvector) for the database tests.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -39,6 +53,16 @@ jobs:
             -e DATABASE_URL=postgresql://user:pass@localhost:5432/db \
             rag-banco-central-api:latest \
             python -c "import app.main; print('API imports OK')"
+
+      # Applies the Alembic migrations to the service database, then runs the whole suite
+      # (unit tests plus the database/admin-API tests, which need RUN_DB_TESTS=1).
+      - name: Run tests
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres \
+            -e RUN_DB_TESTS=1 \
+            rag-banco-central-api:latest \
+            sh -c "alembic upgrade head && python -m pytest -q"
 
       - name: Smoke test frontend image
         run: docker run --rm rag-banco-central-frontend:latest ls dist/index.html

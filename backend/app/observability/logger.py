@@ -26,6 +26,7 @@ async def log_query(
     llm_model: str | None = None,
     tokens_in: int | None = None,
     tokens_out: int | None = None,
+    cost_usd: float | None = None,
     latency_retrieval_ms: int | None = None,
     latency_llm_ms: int | None = None,
     latency_total_ms: int | None = None,
@@ -42,8 +43,8 @@ async def log_query(
                 INSERT INTO query_logs (
                     question, answer, retrieved, top_k, embedding_model, llm_model,
                     tokens_in, tokens_out, latency_retrieval_ms, latency_llm_ms,
-                    latency_total_ms, status, error
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    latency_total_ms, status, error, cost_usd
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     question,
@@ -59,6 +60,7 @@ async def log_query(
                     latency_total_ms,
                     status,
                     error,
+                    cost_usd,
                 ),
             )
         return True

@@ -1,0 +1,33 @@
+{
+  "_note": "expected_titles are matched as whole numbers against the retrieved document titles. 'verified': false means the expected document is a draft guess - check it against the database (Documentos page) before trusting the score.",
+  "questions": [
+    {"id": "id-598", "type": "identifier", "language": "pt", "verified": true,
+     "question": "O que diz a Resolução BCB nº 598?", "expected_titles": ["598"]},
+    {"id": "id-599", "type": "identifier", "language": "pt", "verified": true,
+     "question": "Resumo da Resolução BCB nº 599", "expected_titles": ["599"]},
+    {"id": "id-597", "type": "identifier", "language": "pt", "verified": true,
+     "question": "Do que trata a Resolução BCB 597?", "expected_titles": ["597"]},
+    {"id": "id-591", "type": "identifier", "language": "pt", "verified": true,
+     "question": "Qual o conteúdo da Resolução BCB nº 591?", "expected_titles": ["591"]},
+    {"id": "id-589", "type": "identifier", "language": "pt", "verified": true,
+     "question": "O que estabelece a Resolução BCB nº 589?", "expected_titles": ["589"]},
+    {"id": "id-582", "type": "identifier", "language": "pt", "verified": true,
+     "question": "Explique a Resolução BCB nº 582", "expected_titles": ["582"]},
+    {"id": "id-34977", "type": "identifier", "language": "pt", "verified": true,
+     "question": "O que diz o Comunicado nº 34.977?", "expected_titles": ["34.977"]},
+    {"id": "id-598-en", "type": "identifier", "language": "en", "verified": true,
+     "question": "What does Resolution 598 say?", "expected_titles": ["598"]},
+    {"id": "sem-599", "type": "semantic", "language": "pt", "verified": true,
+     "question": "Qual norma incluiu um código de classificação de finalidade de operação de câmbio na Resolução BCB nº 277?",
+     "expected_titles": ["599"]},
+    {"id": "sem-ccs-ciclo", "type": "semantic", "language": "pt", "verified": false,
+     "question": "Qual o cronograma do primeiro ciclo de qualidade de dados do CCS?",
+     "expected_titles": ["34.977"]},
+    {"id": "sem-catalogo", "type": "semantic", "language": "pt", "verified": false,
+     "question": "O que é o Catálogo de Serviços do SFN?",
+     "expected_titles": ["34.977"]},
+    {"id": "sem-ranking", "type": "semantic", "language": "pt", "verified": false,
+     "question": "Instituições de pagamento no Ranking de Reclamações",
+     "expected_titles": ["37.667"]}
+  ]
+}

@@ -74,6 +74,7 @@ class QueryLogResponse(BaseModel):
     llm_model: Optional[str] = None
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
+    cost_usd: Optional[float] = None
     latency_retrieval_ms: Optional[int] = None
     latency_llm_ms: Optional[int] = None
     latency_total_ms: Optional[int] = None
@@ -104,6 +105,9 @@ class QueryStatsResponse(BaseModel):
     avg_latency_total_ms: float
     avg_tokens_in: float
     avg_tokens_out: float
+    total_tokens_in: int = 0
+    total_tokens_out: int = 0
+    total_cost_usd: float = 0.0
     queries_last_24h: int
 
 
@@ -270,7 +274,7 @@ async def list_queries(
                 await conn.execute(
                     """
                     SELECT id, created_at, question, answer, retrieved, top_k,
-                           embedding_model, llm_model, tokens_in, tokens_out,
+                           embedding_model, llm_model, tokens_in, tokens_out, cost_usd,
                            latency_retrieval_ms, latency_llm_ms, latency_total_ms,
                            status, error
                     FROM query_logs
@@ -365,6 +369,9 @@ async def get_query_stats():
                         COALESCE(AVG(CASE WHEN latency_total_ms IS NOT NULL THEN latency_total_ms ELSE NULL END), 0) as avg_latency_total_ms,
                         COALESCE(AVG(CASE WHEN tokens_in IS NOT NULL THEN tokens_in ELSE NULL END), 0) as avg_tokens_in,
                         COALESCE(AVG(CASE WHEN tokens_out IS NOT NULL THEN tokens_out ELSE NULL END), 0) as avg_tokens_out,
+                        COALESCE(SUM(tokens_in), 0) as total_tokens_in,
+                        COALESCE(SUM(tokens_out), 0) as total_tokens_out,
+                        COALESCE(SUM(cost_usd), 0) as total_cost_usd,
                         COUNT(CASE WHEN created_at >= NOW() - INTERVAL '24 hours' THEN 1 END) as queries_last_24h
                     FROM query_logs
                     """

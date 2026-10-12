@@ -31,3 +31,24 @@ async def save_exchange(
             "VALUES (%s, 'assistant', %s, %s)",
             (conversation_id, answer, Jsonb(sources) if sources is not None else None),
         )
+
+
+async def get_recent_history(conversation_id: uuid.UUID, limit: int) -> list[dict[str, str]]:
+    """Last `limit` messages of a conversation, oldest first, as {role, content}."""
+    if limit <= 0:
+        return []
+    async with get_conn() as conn:
+        rows = await (
+            await conn.execute(
+                """
+                SELECT role, content FROM (
+                    SELECT id, role, content FROM messages
+                    WHERE conversation_id = %s
+                    ORDER BY id DESC LIMIT %s
+                ) recent ORDER BY id
+                """,
+                (conversation_id, limit),
+            )
+        ).fetchall()
+    return [{"role": r["role"], "content": r["content"]} for r in rows]
+

@@ -25,9 +25,9 @@ def test_chunker_respects_token_limit() -> None:
     """Chunks respect max token limit."""
     chunker = PortugueseRegulationChunker()
     
-    # Create text longer than max (800 tokens ≈ 3000+ chars)
+    # One article of ~2000+ tokens (50 repetitions are only ~750 real tokens)
     long_text = (
-        "Art. 1º Lorem ipsum dolor sit amet, consectetur adipiscing elit. " * 50
+        "Art. 1º Lorem ipsum dolor sit amet, consectetur adipiscing elit. " * 150
     )
     
     chunks = chunker.chunk(long_text, document_id=1)
@@ -74,3 +74,34 @@ def test_chunker_token_counting() -> None:
     
     # This text should be ~10-12 tokens
     assert 5 < tokens < 20
+
+
+def test_chunker_keeps_the_last_article() -> None:
+    """Regression: the body of the last article used to be dropped."""
+    chunker = PortugueseRegulationChunker()
+    text = (
+        "Art. 1º Primeiro artigo.\n\n"
+        "Art. 2º Segundo artigo.\n\n"
+        "Art. 3º Terceiro artigo com texto final."
+    )
+    joined = "\n".join(c.text for c in chunker.chunk(text, document_id=1))
+    assert "Primeiro artigo" in joined
+    assert "Segundo artigo" in joined
+    assert "Terceiro artigo com texto final" in joined
+
+
+def test_chunker_single_article_keeps_its_body() -> None:
+    chunker = PortugueseRegulationChunker()
+    chunks = chunker.chunk("Art. 1º O Banco Central resolve incluir o código 123.", document_id=1)
+    assert len(chunks) == 1
+    assert "resolve incluir o código 123" in chunks[0].text
+
+
+def test_chunker_does_not_duplicate_headers_or_lose_preamble() -> None:
+    chunker = PortugueseRegulationChunker()
+    text = "Preâmbulo da norma.\n\nArt. 1º Um.\n\nArt. 2º Dois."
+    joined = "\n".join(c.text for c in chunker.chunk(text, document_id=1))
+    assert "Preâmbulo da norma" in joined
+    assert joined.count("Art. 2") == 1
+    assert joined.count("Art. 1") == 1
+

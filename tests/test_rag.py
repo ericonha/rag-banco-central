@@ -1,4 +1,6 @@
 """Tests for RAG retrieval and answering."""
+from datetime import datetime
+
 import pytest
 from app.rag.answering import _build_context_from_chunks
 
@@ -9,13 +11,13 @@ def test_build_context_from_chunks() -> None:
         {
             "title": "Comunicado N° 37.667",
             "url": "https://bcb.gov.br/...",
-            "published_at": "2021-09-14",
+            "published_at": datetime(2021, 9, 14),
             "text": "O Banco Central comunica...",
         },
         {
             "title": "Resolução N° 1.234",
             "url": "https://bcb.gov.br/...",
-            "published_at": "2021-08-01",
+            "published_at": datetime(2021, 8, 1),
             "text": "Fica estabelecido...",
         },
     ]

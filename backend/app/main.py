@@ -22,9 +22,11 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.db.chunks import get_chunks_needing_embedding
-from app.db.conversations import save_exchange
+from app.db.conversations import get_recent_history, save_exchange
 from app.db.session import get_conn
-from app.rag.answering import answer_question
+from app.rag.answering import answer_question_with_usage
+from app.rag.context import retrieval_query
+from app.rag.pricing import compute_cost
 from app.observability import log_query
 from app.rag.retrieval import retrieve_chunks
 from app.routes.admin import router as admin_router
@@ -238,12 +240,19 @@ async def chat(request: ChatRequest) -> ChatResponse:
     def _elapsed_ms(since: float) -> int:
         return int((time.perf_counter() - since) * 1000)
 
+    # Earlier turns give the LLM context; a storage problem must never break the answer.
+    try:
+        history = await get_recent_history(conversation_id, settings.history_max_messages)
+    except Exception as exc:
+        logger.error("Could not load history for %s: %s", conversation_id, exc)
+        history = []
+
     try:
         async with get_conn() as conn:
-            # Retrieve relevant chunks
+            # Retrieve relevant chunks (short follow-ups are expanded with the previous question)
             chunks = await retrieve_chunks(
                 conn,
-                question=request.question,
+                question=retrieval_query(request.question, history),
                 embedding_model=settings.embedding_model,
                 embedding_dim=settings.embedding_dim,
                 k=top_k,
@@ -284,14 +293,21 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
             # Generate answer
             t_llm = time.perf_counter()
-            answer_text, sources = answer_question(
+            answer_text, sources, usage = answer_question_with_usage(
                 question=request.question,
                 chunks=chunks,
                 language=request.language,
                 anthropic_api_key=settings.anthropic_api_key,
                 anthropic_model=llm_model,
+                history=history,
             )
             llm_ms = _elapsed_ms(t_llm)
+            cost = compute_cost(
+                usage["tokens_in"],
+                usage["tokens_out"],
+                settings.llm_price_input_per_mtok,
+                settings.llm_price_output_per_mtok,
+            )
 
             logger.info(
                 "Answer generated: language=%s sources=%d",
@@ -306,6 +322,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 top_k=top_k,
                 embedding_model=settings.embedding_model,
                 llm_model=llm_model,
+                tokens_in=usage["tokens_in"],
+                tokens_out=usage["tokens_out"],
+                cost_usd=cost,
                 latency_retrieval_ms=retrieval_ms,
                 latency_llm_ms=llm_ms,
                 latency_total_ms=_elapsed_ms(t_start),
