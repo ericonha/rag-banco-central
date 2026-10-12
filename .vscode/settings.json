@@ -1,0 +1,21 @@
+{
+    "sqltools.connections": [
+        {
+            "pgOptions": {
+                "statement_timeout": 0,
+                "connectionTimeoutMillis": 0,
+                "idleTimeoutMillis": 10000,
+                "max": 10
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5433,
+            "driver": "PostgreSQL",
+            "name": "teste",
+            "database": "postgresml",
+            "username": "postgresml",
+            "password": "postgresml"
+        }
+    ]
+}

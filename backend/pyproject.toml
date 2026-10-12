@@ -1,0 +1,29 @@
+[project]
+name = "bcb-rag"
+version = "0.1.0"
+description = "RAG over Banco Central do Brasil regulations"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic-settings",
+    "psycopg[binary,pool]",
+    "httpx",
+    "beautifulsoup4",
+    "anthropic",
+    "alembic",
+    "sqlalchemy",
+]
+
+[dependency-groups]
+dev = ["ruff", "mypy", "pytest", "pytest-asyncio"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+strict = true

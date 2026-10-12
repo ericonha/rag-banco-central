@@ -1,0 +1,24 @@
+services:
+  # PostgresML image. Its entrypoint (/app/entrypoint.sh) starts Postgres 15 and the
+  # dashboard, creates user/password/db "postgresml", enables vector and pgml, then
+  # runs `exec "$@"`. With no command it exits, so we give it one to keep it alive.
+  db:
+    image: ghcr.io/postgresml/postgresml:2.10.0
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgresml_data:/var/lib/postgresql
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgresml_data:

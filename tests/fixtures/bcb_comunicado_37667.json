@@ -1,0 +1,20 @@
+{
+  "navegacao": null,
+  "view": "views/exibeoutrasnormas.aspx",
+  "conteudo": [
+    {
+      "Titulo": "Comunicado N° 37.667",
+      "Tipo": "Comunicado",
+      "DOU": null,
+      "Id": 128001,
+      "Data": "2021-09-14T21:36:55Z",
+      "DataTexto": "14/9/2021 18:36",
+      "Numero": 37667.0,
+      "Assunto": "<div class=\"ExternalClassA7CF3A0CA0A142DC81EC745214D05E76\">Comunica a inclusão das instituições de pagamento no Ranking de Reclamações e informa sobre o processo contínuo de melhoria da qualidade dos dados constantes do Cadastro de Clientes do Sistema Financeiro Nacional.</div>",
+      "Revogado": false,
+      "Cancelado": false,
+      "Texto": "<div class=\"ExternalClass9BDCC6DF6AE0431499F9DC2B70C063E6\"><p><br>\nO Banco Central do Brasil (BC), com base no disposto no art. 10, inciso IX, e 11, inciso VII, da Lei nº 4.595, de 31 de dezembro de 1964, e no art. 10-A da Lei nº 9.613, de 3 de março de 1998, tendo em conta o art. 9º da Circular nº 3.729, de 18 de novembro de 2014, e o art. 3º da Circular nº 3.347, de 11 abril de 2007, comunica a inclusão das instituições de pagamento no Ranking de Reclamações e divulga o caráter permanente do processo de aprimoramento da qualidade dos dados do Cadastro de Clientes do Sistema Financeiro Nacional (CCS).</p></div>",
+      "Voto": null
+    }
+  ]
+}
