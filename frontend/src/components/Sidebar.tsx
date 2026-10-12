@@ -1,7 +1,7 @@
 import type { ConversationSummary, Language } from '../types';
 import { STRINGS } from '../i18n';
 
-export type View = 'chat' | 'logs';
+export type View = 'chat' | 'docs' | 'logs';
 
 interface SidebarProps {
   view: View;
@@ -76,6 +76,9 @@ export function Sidebar(props: SidebarProps) {
       <div className="side-nav">
         <button type="button" className={view === 'chat' ? 'active' : ''} onClick={() => onView('chat')}>
           {t.chat}
+        </button>
+        <button type="button" className={view === 'docs' ? 'active' : ''} onClick={() => onView('docs')}>
+          {t.docs}
         </button>
         <button type="button" className={view === 'logs' ? 'active' : ''} onClick={() => onView('logs')}>
           {t.logs}

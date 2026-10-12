@@ -28,6 +28,19 @@ services:
       - ./check_docs.py:/srv/check_docs.py:ro
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/srv/app"]
 
+  # Daily scrape -> chunk -> embed. Schedule/params come from PIPELINE_* in .env.
+  pipeline:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - db
+    volumes:
+      - ./backend/app:/srv/app
+    command: ["python", "-m", "app.worker.scheduler"]
+
   frontend:
     build:
       context: ./frontend

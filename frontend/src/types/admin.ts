@@ -83,3 +83,28 @@ export interface Paginated<T> {
   page_size: number;
   total_pages: number;
 }
+
+export interface DocumentRow {
+  id: number;
+  title: string | null;
+  url: string;
+  doc_type: string | null;
+  published_at: string | null;
+  fetched_at: string;
+  chunks: number;
+  embedded: number;
+}
+
+export interface DocumentsDashboard {
+  summary: {
+    documents: number;
+    chunks: number;
+    embedded: number;
+    without_chunks: number;
+    last_fetched_at: string | null;
+  };
+  types: { doc_type: string; count: number }[];
+  total: number;
+  items: DocumentRow[];
+}
+

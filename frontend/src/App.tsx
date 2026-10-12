@@ -3,6 +3,7 @@ import { ChatInterface } from './components/ChatInterface';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { Sidebar } from './components/Sidebar';
 import type { View } from './components/Sidebar';
+import { Documents } from './pages/Documents';
 import { Logs } from './pages/Logs';
 import { ApiClient } from './services/api';
 import { STRINGS } from './i18n';
@@ -89,12 +90,14 @@ function App() {
               <path d="M3 5h12M3 9h12M3 13h12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             </svg>
           </button>
-          <h1 className="topbar-title">{view === 'chat' ? activeTitle : t.logsTitle}</h1>
+          <h1 className="topbar-title">{view === 'chat' ? activeTitle : view === 'docs' ? t.docsTitle : t.logsTitle}</h1>
           <LanguageSwitcher language={language} onLanguageChange={setLanguage} />
         </header>
         <main className="content">
           {view === 'chat' ? (
             <ChatInterface key={activeId} conversationId={activeId} language={language} onExchange={refresh} />
+          ) : view === 'docs' ? (
+            <Documents />
           ) : (
             <Logs />
           )}

@@ -11,6 +11,7 @@ import type {
   HealthResponse,
 } from '../types';
 import type {
+  DocumentsDashboard,
   Paginated,
   PipelineEvent,
   PipelineRun,
@@ -98,6 +99,15 @@ export class ApiClient {
     page_size?: number;
   }): Promise<Paginated<PipelineRun>> {
     return getJson(`/admin/runs${toQuery(params)}`, 'Failed to fetch pipeline runs');
+  }
+
+  static getDocumentsDashboard(params: {
+    q?: string;
+    doc_type?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<DocumentsDashboard> {
+    return getJson(`/admin/documents${toQuery(params)}`, 'Failed to fetch documents');
   }
 
   static getPipelineStats(): Promise<PipelineStats[]> {

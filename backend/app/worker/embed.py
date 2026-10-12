@@ -61,7 +61,7 @@ async def run(batch_size: int) -> None:
                     UPDATE chunks
                     SET embedding = pgml.embed('{model}', 'passage: ' || text)::vector({settings.embedding_dim}),
                         embedding_model = '{model}'
-                    WHERE id = ANY($1)
+                    WHERE id = ANY(%s)
                     RETURNING id
                     """
                     

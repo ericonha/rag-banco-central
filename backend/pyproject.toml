@@ -16,6 +16,7 @@ dependencies = [
     "pytest",
     "pytest-asyncio",
     "tiktoken",
+    "tzdata",
 ]
 
 [dependency-groups]

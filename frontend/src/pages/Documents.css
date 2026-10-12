@@ -1,0 +1,83 @@
+.live-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0 12px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.live-dot.on {
+  background: var(--ok-fg);
+  animation: live-pulse 2s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.stat-value-sm {
+  font-size: 16px;
+  padding-top: 4px;
+}
+.type-bars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.type-chip {
+  padding: 4px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.type-chip:hover {
+  background: var(--surface-2);
+}
+.type-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.doc-search {
+  min-width: 260px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 14px;
+}
+.logs-table a {
+  color: var(--ink);
+  text-decoration: none;
+}
+.logs-table a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.embed-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.meter {
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.meter > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s;
+}

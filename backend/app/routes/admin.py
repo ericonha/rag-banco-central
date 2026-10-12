@@ -381,3 +381,75 @@ async def get_query_stats():
     except Exception as exc:
         logger.error("Error getting query stats: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================================
+# Documents dashboard
+# ============================================================================
+
+
+@router.get("/documents")
+async def list_documents_dashboard(
+    q: Optional[str] = None,
+    doc_type: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Summary + paginated documents with chunk/embedding counts (for the live dashboard)."""
+    where, params = ["TRUE"], []
+    if q:
+        where.append("(d.title ILIKE %s OR d.url ILIKE %s)")
+        params += [f"%{q}%", f"%{q}%"]
+    if doc_type:
+        where.append("d.doc_type = %s")
+        params.append(doc_type)
+    where_sql = " AND ".join(where)
+
+    try:
+        async with get_conn() as conn:
+            summary = await (
+                await conn.execute(
+                    """
+                    SELECT
+                      (SELECT COUNT(*) FROM documents) AS documents,
+                      (SELECT COUNT(*) FROM chunks) AS chunks,
+                      (SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL) AS embedded,
+                      (SELECT COUNT(*) FROM documents d WHERE NOT EXISTS
+                         (SELECT 1 FROM chunks c WHERE c.document_id = d.id)) AS without_chunks,
+                      (SELECT MAX(fetched_at) FROM documents) AS last_fetched_at
+                    """
+                )
+            ).fetchone()
+            types = await (
+                await conn.execute(
+                    "SELECT COALESCE(doc_type, 'outros') AS doc_type, COUNT(*) AS count "
+                    "FROM documents GROUP BY 1 ORDER BY 2 DESC"
+                )
+            ).fetchall()
+            total = await _scalar(conn, f"SELECT COUNT(*) FROM documents d WHERE {where_sql}", params)
+            rows = await (
+                await conn.execute(
+                    f"""
+                    SELECT d.id, d.title, d.url, d.doc_type, d.published_at, d.fetched_at,
+                           COUNT(c.id) AS chunks,
+                           COUNT(c.embedding) AS embedded
+                    FROM documents d
+                    LEFT JOIN chunks c ON c.document_id = d.id
+                    WHERE {where_sql}
+                    GROUP BY d.id
+                    ORDER BY COALESCE(d.published_at, d.fetched_at) DESC, d.id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    params + [limit, offset],
+                )
+            ).fetchall()
+        return {
+            "summary": dict(summary),
+            "types": [dict(t) for t in types],
+            "total": total or 0,
+            "items": [dict(r) for r in rows],
+        }
+    except Exception as exc:
+        logger.error("Error building documents dashboard: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
