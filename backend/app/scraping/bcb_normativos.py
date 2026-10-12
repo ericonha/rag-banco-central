@@ -9,13 +9,15 @@ Uses two pure-JSON endpoints (no HTML parsing needed for the listing):
            &startrow=<N>
            &sortlist=Data1OWSDATE:descending
            &refinementfilters=Data:range(datetime(<from>),datetime(<to>))
+           (compound 'AND' refinements return HTTP 500, so the doc type is
+            filtered client-side on TipodoNormativoOWSCHCS)
 
   DETAIL GET /api/conteudo/app/normativos/exibeoutrasnormas
             ?p1=<TIPO_UPPERCASE>
             &p2=<numero>
 
-The ``Source`` class below is parameterised so that a single class covers every
-combination of (conteudo, tipoDocumento) that the BCB search page accepts.
+The ``Source`` class is parameterised so that a single class covers every
+combination of (querytext, tipo_documento) that the BCB search page accepts.
 """
 from __future__ import annotations
 
@@ -39,7 +41,7 @@ _PAGE_URL_TPL = (
     "{base}/estabilidadefinanceira/exibenormativo?tipo={tipo}&numero={numero}"
 )
 
-_ROW_LIMIT = 50  # max allowed by the BCB API in one call
+_ROW_LIMIT = 50  # max rows per page supported by the BCB API
 
 
 def _html_to_text(html: str) -> str:
@@ -57,6 +59,10 @@ def _parse_iso(dt_str: str) -> datetime:
     return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
 
 
+def _norm(s: str | None) -> str:
+    return (s or "").strip().casefold()
+
+
 class BCBNormativosSource:
     """
     Parameterisable source for BCB regulatory documents.
@@ -64,13 +70,15 @@ class BCBNormativosSource:
     Parameters
     ----------
     source_name:
-        Logical identifier stored in ``documents.source`` (e.g. "bcb_comunicados_ccs").
+        Logical identifier stored in ``documents.source``
+        (e.g. "bcb_comunicados_ccs").
     querytext:
-        The ``querytext`` parameter forwarded to the BCB search API
-        (e.g. "CCS", "*" for all documents of a given type).
+        The ``querytext`` forwarded to the BCB search API
+        (e.g. "CCS", or "*" for all documents of a given type).
     tipo_documento:
-        Document type as it appears in the BCB URL and API
-        (e.g. "Comunicado", "Resolução BCB").
+        Document type exactly as it appears in the BCB API
+        (e.g. "Comunicado", "Resolução BCB", "Carta Circular").
+        Used for the client-side type filter and in the detail URL.
     """
 
     def __init__(
@@ -90,7 +98,7 @@ class BCBNormativosSource:
 
     async def list_new(self, since: datetime) -> list[DocRef]:
         """
-        Return all documents published on or after *since*.
+        Return all documents of this type published on or after *since*.
 
         Paginates through the BCB API automatically.
         """
@@ -108,9 +116,7 @@ class BCBNormativosSource:
                     rowlimit=_ROW_LIMIT,
                     startrow=start_row,
                     sortlist="Data1OWSDATE:descending",
-                    refinementfilters=(
-                        f"Data:range(datetime({from_str}),datetime(max))"
-                    ),
+                    refinementfilters=f"Data:range(datetime({from_str}),datetime(max))",
                 )
 
                 rows: list[dict[str, Any]] = data.get("Rows", [])
@@ -118,6 +124,8 @@ class BCBNormativosSource:
                     break
 
                 for row in rows:
+                    if _norm(row.get("TipodoNormativoOWSCHCS")) != _norm(self.tipo_documento):
+                        continue
                     try:
                         numero = int(float(row["NumeroOWSNMBR"]))
                         refs.append(
@@ -143,7 +151,10 @@ class BCBNormativosSource:
                     break
 
         logger.info(
-            "list_new(%s, since=%s): found %d refs", self.source_name, since, len(refs)
+            "list_new(%s, since=%s): found %d refs",
+            self.source_name,
+            since,
+            len(refs),
         )
         return refs
 
@@ -159,6 +170,8 @@ class BCBNormativosSource:
 
         items: list[dict[str, Any]] = data.get("conteudo", [])
         if not items:
+            # Some document types return an empty conteudo array — log and skip.
+            logger.warning("Empty conteudo for %s — skipping", ref.url)
             raise ValueError(f"Empty conteudo for {ref.url}")
 
         item = items[0]

@@ -12,7 +12,9 @@ services:
       - postgresml_data:/var/lib/postgresql
 
   api:
-    build: ./backend
+    build:
+      context: .          # project root — lets Dockerfile reach both backend/ and tests/
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     env_file: .env
     depends_on:
