@@ -1,30 +1,31 @@
 import type { Language } from '../types';
+import { STRINGS } from '../i18n';
 
 interface LanguageSwitcherProps {
   language: Language;
   onLanguageChange: (lang: Language) => void;
 }
 
-export function LanguageSwitcher({
-  language,
-  onLanguageChange,
-}: LanguageSwitcherProps) {
+const OPTIONS: { value: Language; label: string; title: string }[] = [
+  { value: 'pt', label: 'PT', title: 'Português' },
+  { value: 'en', label: 'EN', title: 'English' },
+];
+
+export function LanguageSwitcher({ language, onLanguageChange }: LanguageSwitcherProps) {
   return (
-    <div className="language-switcher">
-      <button
-        className={`lang-btn ${language === 'pt' ? 'active' : ''}`}
-        onClick={() => onLanguageChange('pt')}
-        title="Português"
-      >
-        🇧🇷 PT
-      </button>
-      <button
-        className={`lang-btn ${language === 'en' ? 'active' : ''}`}
-        onClick={() => onLanguageChange('en')}
-        title="English"
-      >
-        🇺🇸 EN
-      </button>
+    <div className="segmented" role="group" aria-label={STRINGS[language].language}>
+      {OPTIONS.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          className={language === opt.value ? 'active' : ''}
+          aria-pressed={language === opt.value}
+          title={opt.title}
+          onClick={() => onLanguageChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }

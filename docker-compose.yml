@@ -21,6 +21,12 @@ services:
       - db
     ports:
       - "8000:8000"
+    # Dev: edit code on the Mac and have it show up inside the container.
+    volumes:
+      - ./backend/app:/srv/app
+      - ./backend/migrations:/srv/migrations
+      - ./check_docs.py:/srv/check_docs.py:ro
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/srv/app"]
 
   frontend:
     build:

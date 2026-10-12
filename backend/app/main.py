@@ -10,6 +10,8 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -20,9 +22,13 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.db.chunks import get_chunks_needing_embedding
+from app.db.conversations import save_exchange
 from app.db.session import get_conn
 from app.rag.answering import answer_question
+from app.observability import log_query
 from app.rag.retrieval import retrieve_chunks
+from app.routes.admin import router as admin_router
+from app.routes.conversations import router as conversations_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,6 +76,7 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceRef]
     retrieved_chunks: int
+    conversation_id: str | None = None
 
 
 class HealthResponse(BaseModel):
@@ -157,6 +164,12 @@ app.add_middleware(
 # Rate limiting middleware
 app.middleware("http")(rate_limit_middleware)
 
+# Admin / observability routes (/api/admin/...)
+app.include_router(admin_router)
+
+# Conversation history (/api/conversations/...)
+app.include_router(conversations_router)
+
 
 # ============================================================================
 # Endpoints
@@ -173,17 +186,57 @@ async def health_check() -> HealthResponse:
     )
 
 
+def _conversation_uuid(raw: str | None) -> uuid.UUID:
+    """Use the client's conversation id when it is a valid UUID, otherwise start a new one."""
+    try:
+        return uuid.UUID(raw) if raw else uuid.uuid4()
+    except ValueError:
+        return uuid.uuid4()
+
+
+async def _persist_exchange(
+    conversation_id: uuid.UUID,
+    language: str,
+    question: str,
+    answer: str,
+    sources: list[SourceRef],
+) -> None:
+    """Save the Q&A pair; a storage problem must never break the answer."""
+    try:
+        await save_exchange(
+            conversation_id,
+            language,
+            question,
+            answer,
+            [s.model_dump(mode="json") for s in sources],
+        )
+    except Exception as exc:
+        logger.error("Could not save conversation %s: %s", conversation_id, exc)
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     """
     Answer a question using RAG.
-    
+
     Retrieves relevant chunks from the database and calls Claude API.
+    Every call (success, empty result or error) is recorded in query_logs.
     """
     if not settings.embedding_model or not settings.anthropic_api_key:
         raise HTTPException(
             status_code=500, detail="Embedding model or API key not configured"
         )
+
+    top_k = 5
+    llm_model = settings.anthropic_model or "claude-opus-5-5"
+    conversation_id = _conversation_uuid(request.conversation_id)
+    t_start = time.perf_counter()
+    retrieval_ms: int | None = None
+    llm_ms: int | None = None
+    retrieved: list[dict[str, Any]] | None = None
+
+    def _elapsed_ms(since: float) -> int:
+        return int((time.perf_counter() - since) * 1000)
 
     try:
         async with get_conn() as conn:
@@ -193,25 +246,52 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 question=request.question,
                 embedding_model=settings.embedding_model,
                 embedding_dim=settings.embedding_dim,
-                k=5,
+                k=top_k,
             )
+            retrieval_ms = _elapsed_ms(t_start)
+            # score = cosine similarity (1 - cosine distance)
+            retrieved = [
+                {
+                    "chunk_id": c["id"],
+                    "document_id": c["document_id"],
+                    "score": round(1 - float(c["distance"]), 4),
+                }
+                for c in chunks
+            ]
 
             if not chunks:
+                answer = (
+                    "No relevant documents found." if request.language == "en"
+                    else "Nenhum documento relevante encontrado."
+                )
+                await log_query(
+                    question=request.question,
+                    answer=answer,
+                    retrieved=retrieved,
+                    top_k=top_k,
+                    embedding_model=settings.embedding_model,
+                    llm_model=None,
+                    latency_retrieval_ms=retrieval_ms,
+                    latency_total_ms=_elapsed_ms(t_start),
+                )
+                await _persist_exchange(conversation_id, request.language, request.question, answer, [])
                 return ChatResponse(
-                    answer="No relevant documents found." if request.language == "en"
-                    else "Nenhum documento relevante encontrado.",
+                    answer=answer,
                     sources=[],
                     retrieved_chunks=0,
+                    conversation_id=str(conversation_id),
                 )
 
             # Generate answer
+            t_llm = time.perf_counter()
             answer_text, sources = answer_question(
                 question=request.question,
                 chunks=chunks,
                 language=request.language,
                 anthropic_api_key=settings.anthropic_api_key,
-                anthropic_model=settings.anthropic_model or "claude-opus-5-5",
+                anthropic_model=llm_model,
             )
+            llm_ms = _elapsed_ms(t_llm)
 
             logger.info(
                 "Answer generated: language=%s sources=%d",
@@ -219,14 +299,44 @@ async def chat(request: ChatRequest) -> ChatResponse:
                 len(sources),
             )
 
+            await log_query(
+                question=request.question,
+                answer=answer_text,
+                retrieved=retrieved,
+                top_k=top_k,
+                embedding_model=settings.embedding_model,
+                llm_model=llm_model,
+                latency_retrieval_ms=retrieval_ms,
+                latency_llm_ms=llm_ms,
+                latency_total_ms=_elapsed_ms(t_start),
+            )
+
+            source_refs = [SourceRef(**s) for s in sources]
+            await _persist_exchange(
+                conversation_id, request.language, request.question, answer_text, source_refs
+            )
             return ChatResponse(
                 answer=answer_text,
-                sources=[SourceRef(**s) for s in sources],
+                sources=source_refs,
                 retrieved_chunks=len(chunks),
+                conversation_id=str(conversation_id),
             )
 
     except Exception as exc:
         logger.error("Error processing question: %s", exc)
+        await log_query(
+            question=request.question,
+            answer=None,
+            retrieved=retrieved,
+            top_k=top_k,
+            embedding_model=settings.embedding_model,
+            llm_model=llm_model,
+            latency_retrieval_ms=retrieval_ms,
+            latency_llm_ms=llm_ms,
+            latency_total_ms=_elapsed_ms(t_start),
+            status="error",
+            error=str(exc),
+        )
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -257,15 +367,6 @@ async def list_documents(limit: int = 20) -> list[DocumentRef]:
     except Exception as exc:
         logger.error("Error listing documents: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.get("/api/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str) -> dict[str, Any]:
-    """
-    Get conversation history (placeholder for Phase 5).
-    """
-    # TODO: Implement after Phase 6 (conversation tracking)
-    return {"conversation_id": conversation_id, "messages": []}
 
 
 if __name__ == "__main__":

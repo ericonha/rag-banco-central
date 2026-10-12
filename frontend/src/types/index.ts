@@ -22,6 +22,7 @@ export interface ChatResponse {
   answer: string;
   sources: SourceRef[];
   retrieved_chunks: number;
+  conversation_id?: string;
 }
 
 export interface DocumentRef {
@@ -48,10 +49,26 @@ export interface Message {
   timestamp: Date;
 }
 
-export interface AppState {
-  messages: Message[];
+/** Row of GET /api/conversations (sidebar). */
+export interface ConversationSummary {
+  id: string;
+  title: string;
   language: Language;
-  loading: boolean;
-  error?: string;
-  documents: DocumentRef[];
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+/** Message as stored by the backend (GET /api/conversations/{id}). */
+export interface StoredMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  sources: SourceRef[] | null;
+  created_at: string;
+}
+
+export interface ConversationDetail {
+  conversation_id: string;
+  messages: StoredMessage[];
 }

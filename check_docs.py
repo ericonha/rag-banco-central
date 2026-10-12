@@ -11,8 +11,49 @@ except ImportError:
     os.system("pip install psycopg[binary] -q")
     import psycopg
 
+def _conn_string() -> str:
+    """DATABASE_URL inside Docker (db:5432); localhost:5433 when run on the Mac."""
+    return os.getenv("DATABASE_URL", "postgresql://postgresml:postgresml@localhost:5433/postgresml")
+
+
+def check_pipeline():
+    try:
+        with psycopg.connect(_conn_string()) as conn, conn.cursor() as cur:
+            print()
+            print("=" * 80)
+            print("PIPELINE RUNS")
+            print("=" * 80)
+            cur.execute("""
+                SELECT stage, status, COUNT(*), MAX(started_at), COALESCE(AVG(duration_ms), 0)::int
+                FROM pipeline_runs GROUP BY stage, status ORDER BY stage, status
+            """)
+            rows = cur.fetchall()
+            if not rows:
+                print("No pipeline runs yet.")
+            for stage, status, n, last, avg in rows:
+                print(f"  {stage:<7} {status:<17} runs={n:<4} avg={avg}ms  last={last}")
+
+            print()
+            print("=" * 80)
+            print("QUERY LOGS")
+            print("=" * 80)
+            cur.execute("""
+                SELECT COUNT(*), COALESCE(SUM((status = 'ok')::int), 0),
+                       COALESCE(AVG(latency_total_ms), 0)::int, MAX(created_at)
+                FROM query_logs
+            """)
+            total, ok, avg_ms, last = cur.fetchone()
+            if not total:
+                print("No queries logged yet.")
+            else:
+                print(f"  queries={total} ok={ok} errors={total - ok} avg_latency={avg_ms}ms last={last}")
+    except Exception as e:
+        print(f"Error reading pipeline tables: {e}")
+        sys.exit(1)
+
+
 def check_documents():
-    conn_string = "postgresql://postgresml:postgresml@localhost:5433/postgresml"
+    conn_string = _conn_string()
     
     try:
         with psycopg.connect(conn_string) as conn:
@@ -82,8 +123,9 @@ def check_documents():
         print("\nMake sure:")
         print("  1. Docker containers are running: docker-compose up db api frontend")
         print("  2. Database is initialized: docker-compose exec api alembic upgrade head")
-        print("  3. PostgreSQL is accessible on localhost:5433")
+        print("  3. PostgreSQL is reachable: localhost:5433 from the Mac, db:5432 inside Docker")
         sys.exit(1)
 
 if __name__ == "__main__":
     check_documents()
+    check_pipeline()

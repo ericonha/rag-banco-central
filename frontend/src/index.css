@@ -1,25 +1,113 @@
+/* Design tokens + base. Light by default, dark follows the OS setting. */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f3;
+  --ink: #15202b;
+  --ink-2: #4a5663;
+  --ink-3: #75828f;
+  --line: #e2e6eb;
+  --line-strong: #cdd3da;
+
+  --accent: #0b5f55;
+  --accent-ink: #ffffff;
+  --accent-soft: #e2f0ed;
+
+  --ok-bg: #e1f2e7;
+  --ok-fg: #1d6a39;
+  --info-bg: #e2ebf8;
+  --info-fg: #274f9e;
+  --warn-bg: #fbeed0;
+  --warn-fg: #85570a;
+  --bad-bg: #fbe3e0;
+  --bad-fg: #a3281f;
+
+  --font-ui: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-read: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+
+  --radius: 8px;
+  --radius-lg: 12px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1418;
+    --surface: #151d23;
+    --surface-2: #1c2730;
+    --ink: #e6ebef;
+    --ink-2: #a5b1bc;
+    --ink-3: #7b8996;
+    --line: #25313a;
+    --line-strong: #34444f;
+
+    --accent: #55b9a8;
+    --accent-ink: #062320;
+    --accent-soft: #15302c;
+
+    --ok-bg: #16301f;
+    --ok-fg: #7fd09b;
+    --info-bg: #182a47;
+    --info-fg: #8fb2f0;
+    --warn-bg: #3a2c0f;
+    --warn-fg: #e8c06a;
+    --bad-bg: #3d1b18;
+    --bad-fg: #f0948c;
+    color-scheme: dark;
+  }
+}
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   width: 100%;
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
-.app {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
+body {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

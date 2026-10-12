@@ -1,68 +1,92 @@
-import { useState } from 'react';
-import type { SourceRef } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import type { Language, SourceRef } from '../types';
+import { STRINGS } from '../i18n';
+
+export interface CitationFocus {
+  index: number;
+  tick: number;
+}
 
 interface SourceCitationsProps {
   sources: SourceRef[];
-  retrievedChunks: number;
+  retrievedChunks?: number;
+  language: Language;
+  /** Set when the reader clicks a [n] marker in the answer. */
+  focus?: CitationFocus;
 }
 
-export function SourceCitations({ sources, retrievedChunks }: SourceCitationsProps) {
-  const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
+export function SourceCitations({ sources, retrievedChunks, language, focus }: SourceCitationsProps) {
+  const t = STRINGS[language];
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [flash, setFlash] = useState<number | null>(null);
+  const itemRefs = useRef<(HTMLLIElement | null)[]>([]);
 
-  const toggleExpand = (index: number) => {
-    const newExpanded = new Set(expandedSources);
-    if (newExpanded.has(index)) {
-      newExpanded.delete(index);
-    } else {
-      newExpanded.add(index);
-    }
-    setExpandedSources(newExpanded);
-  };
+  useEffect(() => {
+    if (!focus || focus.index < 0 || focus.index >= sources.length) return;
+    const index = focus.index;
+    setOpen((prev) => new Set(prev).add(index));
+    setFlash(index);
+    itemRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const timer = window.setTimeout(() => setFlash(null), 1400);
+    return () => window.clearTimeout(timer);
+  }, [focus?.tick]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (sources.length === 0) {
-    return null;
-  }
+  const toggle = (index: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+
+  if (sources.length === 0) return null;
 
   return (
-    <div className="sources-section">
-      <h4>📚 Sources ({sources.length} of {retrievedChunks} chunks)</h4>
-      <div className="sources-list">
-        {sources.map((source, index) => (
-          <div key={index} className="source-item">
-            <div
-              className="source-header"
-              onClick={() => toggleExpand(index)}
-              style={{ cursor: 'pointer' }}
+    <section className="sources" aria-label={t.sources}>
+      <h4 className="sources-title">
+        {t.sources}
+        {retrievedChunks ? <span className="sources-count">{retrievedChunks} {t.chunks}</span> : null}
+      </h4>
+      <ol className="source-list">
+        {sources.map((source, index) => {
+          const isOpen = open.has(index);
+          return (
+            <li
+              key={index}
+              ref={(el) => {
+                itemRefs.current[index] = el;
+              }}
+              className={`source${flash === index ? ' flash' : ''}`}
             >
-              <div className="source-title">
-                <span className="source-badge">{index + 1}</span>
-                <a
-                  href={source.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="source-link"
-                >
-                  {source.title}
-                </a>
-              </div>
-              <div className="source-meta">
-                <span className="doc-type">{source.doc_type}</span>
-                <span className="date">
-                  {new Date(source.published_at).toLocaleDateString('pt-BR')}
+              <button
+                type="button"
+                className="source-head"
+                aria-expanded={isOpen}
+                onClick={() => toggle(index)}
+              >
+                <span className="source-num">{index + 1}</span>
+                <span className="source-main">
+                  <span className="source-name">{source.title}</span>
+                  <span className="source-meta">
+                    {source.doc_type} · {new Date(source.published_at).toLocaleDateString('pt-BR')}
+                  </span>
                 </span>
-                <span className="expand-icon">
-                  {expandedSources.has(index) ? '▼' : '▶'}
-                </span>
-              </div>
-            </div>
-            {expandedSources.has(index) && (
-              <div className="source-content">
-                <p className="chunk-text">{source.chunk_text}</p>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
+                <svg className={`chevron${isOpen ? ' open' : ''}`} width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {isOpen && (
+                <div className="source-body">
+                  <p className="source-excerpt">{source.chunk_text}</p>
+                  <a href={source.url} target="_blank" rel="noopener noreferrer" className="source-link">
+                    {source.url}
+                  </a>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }

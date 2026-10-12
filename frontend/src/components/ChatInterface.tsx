@@ -1,111 +1,171 @@
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MessageList } from './MessageList';
-import { LanguageSwitcher } from './LanguageSwitcher';
 import { ApiClient } from '../services/api';
-import type { Message, Language, ChatResponse } from '../types';
+import { STRINGS } from '../i18n';
+import type { Language, Message, StoredMessage } from '../types';
 
-export function ChatInterface() {
+interface ChatInterfaceProps {
+  conversationId: string;
+  language: Language;
+  /** Called after an exchange is saved so the sidebar can refresh. */
+  onExchange: () => void;
+}
+
+type ChatError = { kind: 'connect' } | { kind: 'text'; text: string };
+
+const toMessage = (m: StoredMessage): Message => ({
+  id: String(m.id),
+  role: m.role,
+  content: m.content,
+  sources: m.sources ?? undefined,
+  timestamp: new Date(m.created_at),
+});
+
+export function ChatInterface({ conversationId, language, onExchange }: ChatInterfaceProps) {
+  const t = STRINGS[language];
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [language, setLanguage] = useState<Language>('pt');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>();
-  const [conversationId] = useState<string>(() => crypto.randomUUID());
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [error, setError] = useState<ChatError | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Load the saved history whenever the conversation changes.
   useEffect(() => {
-    // Check backend health on load
-    ApiClient.checkHealth()
-      .then(() => {
-        console.log('✓ Backend is healthy');
-        setError(undefined);
+    let cancelled = false;
+    setHistoryLoading(true);
+    setMessages([]);
+    setError(null);
+    ApiClient.getConversation(conversationId)
+      .then((detail) => {
+        if (!cancelled) setMessages(detail.messages.map(toMessage));
       })
-      .catch((err) => {
-        console.error('✗ Backend health check failed:', err);
-        setError('Cannot connect to backend. Make sure the API is running.');
+      .catch(() => {
+        if (!cancelled) setError({ kind: 'connect' });
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
       });
-  }, []);
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const trimmedInput = input.trim();
-    if (!trimmedInput) return;
-
-    // Add user message
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: trimmedInput,
-      timestamp: new Date(),
+    return () => {
+      cancelled = true;
     };
+  }, [conversationId]);
 
-    setMessages((prev) => [...prev, userMessage]);
+  const resizeInput = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+  };
+
+  const submit = async (raw: string) => {
+    const question = raw.trim();
+    if (!question || loading) return;
+
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: 'user', content: question, timestamp: new Date() },
+    ]);
     setInput('');
+    requestAnimationFrame(resizeInput);
     setLoading(true);
-    setError(undefined);
+    setError(null);
 
     try {
-      // Call backend
-      const response: ChatResponse = await ApiClient.chat({
-        question: trimmedInput,
+      const response = await ApiClient.chat({
+        question,
         language,
         conversation_id: conversationId,
       });
-
-      // Add assistant message
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: response.answer,
-        sources: response.sources,
-        retrieved_chunks: response.retrieved_chunks,
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: response.answer,
+          sources: response.sources,
+          retrieved_chunks: response.retrieved_chunks,
+          timestamp: new Date(),
+        },
+      ]);
+      onExchange();
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
-      console.error('Chat error:', err);
+      setError({ kind: 'text', text: err instanceof Error ? err.message : String(err) });
     } finally {
       setLoading(false);
-      inputRef.current?.focus();
+      textareaRef.current?.focus();
     }
   };
 
+  const showEmpty = messages.length === 0 && !loading && !historyLoading;
+
   return (
-    <div className="chat-interface">
-      <div className="chat-header">
-        <div className="header-content">
-          <h1>BCB RAG Chatbot</h1>
-          <LanguageSwitcher language={language} onLanguageChange={setLanguage} />
+    <div className="chat">
+      <div className="thread">
+        <div className="thread-inner">
+          {showEmpty && (
+            <div className="empty">
+              <h1>{t.emptyTitle}</h1>
+              <p>{t.emptyBody}</p>
+              <div className="examples" role="list" aria-label={t.examplesLabel}>
+                {t.examples.map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    role="listitem"
+                    className="example"
+                    onClick={() => submit(example)}
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <MessageList messages={messages} loading={loading} language={language} />
+          {error && (
+            <div className="notice" role="alert">
+              {error.kind === 'connect' ? t.connectError : error.text}
+            </div>
+          )}
         </div>
       </div>
 
-      {error && <div className="error-banner">{error}</div>}
-
-      <MessageList messages={messages} loading={loading} />
-
-      <form className="chat-input-form" onSubmit={handleSendMessage}>
-        <input
-          ref={inputRef}
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={
-            language === 'pt'
-              ? 'Digite sua pergunta...'
-              : 'Type your question...'
-          }
-          disabled={loading}
-          className="chat-input"
-          autoFocus
-        />
-        <button type="submit" disabled={loading || !input.trim()} className="send-button">
-          {loading ? '⏳' : '📤'}
-        </button>
-      </form>
+      <div className="composer-wrap">
+        <form
+          className="composer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit(input);
+          }}
+        >
+          <textarea
+            ref={textareaRef}
+            value={input}
+            rows={1}
+            placeholder={t.placeholder}
+            aria-label={t.placeholder}
+            disabled={loading}
+            autoFocus
+            onChange={(e) => {
+              setInput(e.target.value);
+              resizeInput();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                submit(input);
+              }
+            }}
+          />
+          <button type="submit" className="send" disabled={loading || !input.trim()} aria-label={t.send} title={t.send}>
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <path d="M9 14V4M4.5 8.5 9 4l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </form>
+        <p className="disclaimer">{t.disclaimer}</p>
+      </div>
     </div>
   );
 }
